@@ -1,0 +1,57 @@
+.interview-selector {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+  padding: 32px 28px;
+  margin-bottom: 32px;
+}
+.selector-row {
+  display: flex;
+  gap: 32px;
+  margin-bottom: 18px;
+}
+.selector-row label {
+  font-weight: 500;
+  color: #334155;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.selector-row select {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid #e0e7ff;
+  font-size: 1rem;
+  background: #f8fafc;
+  color: #222;
+}
+.interview-list ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.interview-list li {
+  padding: 12px 0;
+  border-bottom: 1px solid #f1f5f9;
+  font-size: 1.08rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.interview-list li:last-child {
+  border-bottom: none;
+}
+.interview-list button {
+  background: #6366f1;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 6px 18px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.interview-list button:hover {
+  background: #4f46e5;
+}

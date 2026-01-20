@@ -1,0 +1,178 @@
+.mock-interview-container {
+  max-width: 800px;
+  margin: 2rem auto;
+  padding: 2rem;
+  background: rgb(252, 252, 252);
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.mock-header {
+  text-align: center;
+  margin-bottom: 2rem;
+}
+
+.mock-header h2 {
+  font-size: 2rem;
+  color: #2c3e50;
+  margin-bottom: 0.5rem;
+}
+
+.duration-buttons{
+  color: #000;
+}
+
+.mock-header p {
+  color: #7f8c8d;
+  font-size: 1.1rem;
+}
+
+.mock-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+
+.form-group label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+  color: #000;
+  margin-bottom: 0.5rem;
+}
+
+.form-group select {
+  width: 100%;
+  padding: 0.75rem;
+  border: 2px solid #e0e0e0;
+  border-radius: 8px;
+  font-size: 1rem;
+  color: #000;
+  transition: all 0.3s;
+}
+
+.form-group select:focus {
+  outline: none;
+  border-color: #3498db;
+}
+
+.difficulty-buttons,
+.duration-buttons {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.difficulty-btn,
+.duration-btn {
+  flex: 1;
+  min-width: 100px;
+  padding: 0.75rem 1.5rem;
+  border: 2px solid #e0e0e0;
+  background: white;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #000;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.difficulty-btn:hover,
+.duration-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+.difficulty-btn.active,
+.duration-btn.active {
+  color: white;
+  border-color: #3498db;
+  background: #3498db;
+}
+
+.difficulty-btn.easy.active {
+  background: #27ae60;
+  border-color: #27ae60;
+}
+
+.difficulty-btn.medium.active {
+  background: #f39c12;
+  border-color: #f39c12;
+}
+
+.difficulty-btn.hard.active {
+  background: #e74c3c;
+  border-color: #e74c3c;
+}
+
+.mock-info {
+  background: #ffffff;
+  padding: 1.5rem;
+  border-radius: 8px;
+  border-left: 4px solid #3498db;
+}
+
+.mock-info h3 {
+  color: #000;
+  margin-bottom: 1rem;
+}
+
+.mock-info ul {
+  color: black;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.mock-info li {
+  padding: 0.5rem 0;
+  color: #000;
+  font-size: 1rem;
+}
+
+.start-mock-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 1rem 2rem;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: rgb(255, 255, 255);
+  border: none;
+  border-radius: 8px;
+  font-size: 1.1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s;
+  margin-top: 1rem;
+}
+
+.start-mock-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 16px rgba(102, 126, 234, 0.4);
+}
+
+.start-mock-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+@media (max-width: 768px) {
+  .mock-interview-container {
+    padding: 1rem;
+    margin: 1rem;
+  }
+
+  .difficulty-buttons,
+  .duration-buttons {
+    flex-direction: column;
+  }
+
+  .difficulty-btn,
+  .duration-btn {
+    width: 100%;
+  }
+}

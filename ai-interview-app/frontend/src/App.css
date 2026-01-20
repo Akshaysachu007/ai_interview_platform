@@ -1,0 +1,274 @@
+html, body, #root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  text-align: center;
+}
+
+#app-root {
+  width: 100%;
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
+}
+
+.login-container {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 32px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.login-card {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.logo {
+  border: #fafbff;
+  height: 6em;
+  padding: 1.5em;
+  will-change: filter;
+  transition: filter 300ms;
+}
+.logo:hover {
+  filter: drop-shadow(0 0 2em #646cffaa);
+}
+.logo.react:hover {
+  filter: drop-shadow(0 0 2em #61dafbaa);
+}
+
+@keyframes logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.login-card > * {
+  position: relative;
+  z-index: 1;
+}
+.login-card .title {
+  margin: 0 0 32px 0;
+  font-size: 2.5rem;
+  color: #2d3748;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  text-align: center;
+}
+.roles-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(280px, 1fr));
+  gap: 2.5rem;
+  margin: 40px auto;
+  padding: 0;
+  width: 100%;
+  justify-content: center;
+  place-items: center;
+}
+.role-card {
+  color: rgb(0, 0, 0); 
+  width: 80%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  padding: 40px 32px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: linear-gradient(145deg, #ffffff 0%, #fafbff 100%);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-sizing: border-box;
+  min-height: 280px;
+  height: 100%;
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+}
+.role-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: 20px;
+  padding: 2rem;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.849),
+    rgba(0, 208, 255, 0.2)
+  );
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(15px) saturate(150%);
+  box-shadow: 0 0 10px rgba(0, 255, 255, 0.2), inset 0 0 10px rgba(255, 255, 255, 0.05);
+  transition: all 0.5s ease;
+  transform-style: preserve-3d;
+  cursor: pointer;
+}
+
+/* make inner text pop above effects */
+.role-card * {
+  position: relative;
+  z-index: 2;
+}
+
+/* shimmering gradient overlay  faint before hover */
+.role-card::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: linear-gradient(
+    120deg,
+    rgba(4, 4, 4, 0.15),
+    rgba(255, 0, 255, 0.1),
+    rgba(0, 255, 255, 0.15)
+  );
+  opacity: 0.4; /* <-- visible even before hover */
+  transform: rotate(15deg);
+  transition: all 0.7s ease;
+}
+
+/* subtle light reflection */
+.role-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at top left, rgba(4, 144, 232, 0.15), transparent 90%);
+  opacity: 1;
+  z-index: 1;
+  transition: all 0.7s ease;
+}
+
+/* hover effect: 3D tilt + stronger glow + shimmer motion */
+.role-card:hover {
+  transform: perspective(800px) rotateX(6deg) rotateY(12deg) scale(1.07);
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.5), 0 0 60px rgba(255, 255, 255, 0.9);
+  border-color: rgba(0, 0, 0, 0.4);
+}
+
+/* more shimmer movement on hover */
+.role-card:hover::before {
+  opacity: 0.4;
+  transform: rotate(-20deg) translateY(50%);
+}
+
+
+
+.role-card.selected {
+  background: linear-gradient(
+    135deg,
+    rgba(0, 255, 255, 0.29),
+    rgba(255, 0, 200, 0.2)
+  );
+  border-color: rgba(17, 19, 19, 0.687);
+  box-shadow: 0 0 25px rgba(42, 45, 45, 0.5);
+  transform: scale(1.05);
+}
+
+.role-card.selected::before {
+  opacity: 0.8;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+.actions {
+  width: 100%;
+  margin-top: 32px;
+  padding: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+.primary {
+  background: #4f46e5;
+  color: #fff;
+  padding: 16px 48px;
+  font-size: 1.1rem;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  min-width: 240px;
+  font-weight: 500;
+}
+.primary:hover {
+  background: #163bde;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(79,70,229,0.2);
+}
+
+/* simple role page styles */
+.login-page {
+  min-height: 100vh;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  background: #f8fafc;
+}
+.role-page-card {
+  background:#fff;
+  padding: 28px;
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(252, 253, 254, 0.952);
+  max-width: 800px;
+  width: 100%;
+  text-align: center;
+}
+.role-page-card h2 {margin:0 0 8px 0}
+
+@media (max-width:920px) {
+  .roles-grid {
+    grid-template-columns: repeat(2,minmax(0,1fr));
+    gap: 24px;
+    margin: 32px auto;
+  }
+  .login-container {
+    padding: 24px;
+  }
+}
+
+@media (max-width:640px) {
+  .roles-grid {
+    grid-template-columns: 1fr;
+    gap: 16px;
+    margin: 24px auto;
+  }
+  .login-card .title {
+    font-size: 2rem;
+  }
+  .login-container {
+    padding: 16px;
+  }
+  .login-page {
+    padding: 1rem;
+  }
+}
+
+

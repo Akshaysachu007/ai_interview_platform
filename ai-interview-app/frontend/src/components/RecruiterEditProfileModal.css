@@ -1,0 +1,42 @@
+.recruiter-modal .edit-profile-modal {
+  min-width: 500px;
+  max-width: 600px;
+}
+
+.recruiter-modal label {
+  font-weight: 500;
+  color: #334155;
+  margin-bottom: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.recruiter-modal input,
+.recruiter-modal textarea,
+.recruiter-modal select {
+  border: 1px solid #e0e7ff;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 1rem;
+  background: #f8fafc;
+  color: #222;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.recruiter-modal select {
+  cursor: pointer;
+}
+
+.recruiter-modal textarea {
+  resize: vertical;
+  font-family: inherit;
+}
+
+.recruiter-modal input:focus,
+.recruiter-modal textarea:focus,
+.recruiter-modal select:focus {
+  outline: none;
+  border-color: #667eea;
+}

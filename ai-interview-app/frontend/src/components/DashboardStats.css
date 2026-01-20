@@ -1,0 +1,95 @@
+/* DashboardStats.css */
+.dashboard-stats {
+  padding: 20px 0;
+}
+
+.dashboard-stats h2 {
+  font-size: 1.8rem;
+  color: #333;
+  margin-bottom: 25px;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 20px;
+}
+
+.stat-card {
+  background: white;
+  border-radius: 12px;
+  padding: 25px;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.1);
+  transition: all 0.3s ease;
+  border-left: 5px solid;
+}
+
+.stat-card:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 5px 20px rgba(0, 0, 0, 0.15);
+}
+
+.stat-card.candidates {
+  border-left-color: #667eea;
+  background: linear-gradient(135deg, #667eea10 0%, #764ba210 100%);
+}
+
+.stat-card.recruiters {
+  border-left-color: #f093fb;
+  background: linear-gradient(135deg, #f093fb10 0%, #f5576c10 100%);
+}
+
+.stat-card.verified {
+  border-left-color: #4facfe;
+  background: linear-gradient(135deg, #4facfe10 0%, #00f2fe10 100%);
+}
+
+.stat-card.pending {
+  border-left-color: #fa709a;
+  background: linear-gradient(135deg, #fa709a10 0%, #fee14010 100%);
+}
+
+.stat-card.subscribed {
+  border-left-color: #30cfd0;
+  background: linear-gradient(135deg, #30cfd010 0%, #330d6710 100%);
+}
+
+.stat-card.weekly {
+  border-left-color: #a8edea;
+  background: linear-gradient(135deg, #a8edea10 0%, #fed6e310 100%);
+}
+
+.stat-card.monthly {
+  border-left-color: #ff9a9e;
+  background: linear-gradient(135deg, #ff9a9e10 0%, #fecfef10 100%);
+}
+
+.stat-card.logs {
+  border-left-color: #ffecd2;
+  background: linear-gradient(135deg, #ffecd210 0%, #fcb69f10 100%);
+}
+
+.stat-title {
+  font-size: 0.9rem;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 10px;
+}
+
+.stat-value {
+  font-size: 2.5rem;
+  font-weight: bold;
+  color: #333;
+}
+
+.stat-description {
+  font-size: 0.85rem;
+  color: #888;
+  margin-top: 8px;
+}
+
+.stat-info{
+  font-size: 0.75rem;
+  color: #000000;
+}

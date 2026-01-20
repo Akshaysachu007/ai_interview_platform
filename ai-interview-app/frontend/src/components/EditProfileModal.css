@@ -1,0 +1,102 @@
+.edit-profile-modal-backdrop {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.25);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow-y: auto;
+}
+.edit-profile-modal {
+  background: rgba(255,255,255,0.30);
+  border-radius: 16px;
+  box-shadow: 0 8px 32px rgba(99,102,241,0.12);
+  padding: 32px 28px;
+  min-width: 340px;
+  max-width: 95vw;
+  width: 400px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-height: 90vh;
+  overflow-y: auto;
+  backdrop-filter: blur(12px) saturate(160%);
+  -webkit-backdrop-filter: blur(12px) saturate(160%);
+  border: 1.5px solid rgba(255,255,255,0.25);
+}
+.edit-profile-modal h2 {
+  margin-top: 0;
+  color: #4f46e5;
+  text-align: center;
+}
+.edit-profile-modal form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.edit-profile-modal label {
+  font-weight: 500;
+  color: #334155;
+  margin-bottom: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.edit-profile-modal input,
+.edit-profile-modal textarea,
+.edit-profile-modal select {
+  border: 1px solid #e0e7ff;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 1rem;
+  background: #f8fafc;
+  color: #222;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.edit-profile-modal input:focus,
+.edit-profile-modal textarea:focus,
+.edit-profile-modal select:focus {
+  outline: none;
+  border-color: #6366f1;
+  background: #ffffff;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+.edit-profile-modal select:hover {
+  border-color: #6366f1;
+  background: #ffffff;
+}
+.edit-profile-modal textarea {
+  resize: vertical;
+  cursor: text;
+}
+.avatar-preview {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  object-fit: cover;
+  margin-bottom: 8px;
+  border: 2px solid #6366f1;
+}
+.modal-actions {
+  display: flex;
+  gap: 16px;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+.modal-actions button {
+  background: #6366f1;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 20px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.modal-actions button.cancel {
+  background: #e0e7ff;
+  color: #4f46e5;
+}
