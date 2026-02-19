@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bell, Search, Calendar, Users, FileText, Video, BarChart3, Settings, Menu, X, Play, AlertTriangle, CheckCircle, Clock, Eye, Send, Plus, Filter, Download } from 'lucide-react';
+import { Bell, Search, Calendar, Users, FileText, Video, BarChart3, Settings, Menu, X, Play, AlertTriangle, CheckCircle, Clock, Eye, Send, Plus, Filter, Download, Brain } from 'lucide-react';
 import InterviewCreation from '../components/InterviewCreation';
 import ApplicationManagement from '../components/ApplicationManagement';
 import RecruiterInterviews from '../components/RecruiterInterviews';
 import LiveInterviewMonitor from '../components/LiveInterviewMonitor';
+import AIReports from '../components/AIReports';
 import './RecruiterDashboard.css';
 
 const API_URL = import.meta.env.VITE_API_URL;
@@ -501,6 +502,14 @@ export default function RecruiterDashboard() {
                   <FileText size={20} />
                   All Interviews
                 </a>
+                <a 
+                  href="#" 
+                  className={`menu-item ${activeView === 'ai-reports' ? 'active' : ''}`}
+                  onClick={(e) => { e.preventDefault(); setActiveView('ai-reports'); }}
+                >
+                  <Brain size={20} />
+                  AI Evaluations
+                </a>
                 <a href="#" className="menu-item">
                   <AlertTriangle size={20} />
                   Proctoring Center
@@ -579,6 +588,10 @@ export default function RecruiterDashboard() {
             <button className="action-btn" onClick={() => setActiveView('applications')}>
               <Users size={20} />
               View Applications
+            </button>
+            <button className="action-btn" onClick={() => setActiveView('ai-reports')}>
+              <Brain size={20} />
+              AI Evaluations
             </button>
             <button className="action-btn" onClick={() => setActiveView('interviews')}>
               <FileText size={20} />
@@ -793,6 +806,8 @@ export default function RecruiterDashboard() {
             <RecruiterInterviews />
           ) : activeView === 'live' ? (
             <LiveInterviewMonitor />
+          ) : activeView === 'ai-reports' ? (
+            <AIReports />
           ) : null}
         </main>
       </div>

@@ -143,6 +143,26 @@
   color: white;
 }
 
+.badge-danger {
+  background: #f44336;
+  color: white;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.badge-info {
+  background: #2196f3;
+  color: white;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
 /* Two Column Layout */
 .interview-layout {
   display: grid;

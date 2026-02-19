@@ -55,6 +55,7 @@ router.get('/recruiters-by-stream', auth, async (req, res) => {
 router.post('/apply/:interviewId', auth, async (req, res) => {
   try {
     const { interviewId } = req.params;
+    const { candidatePhoto } = req.body; // Photo uploaded during application
 
     const interview = await Interview.findById(interviewId);
     if (!interview) {
@@ -63,6 +64,20 @@ router.post('/apply/:interviewId', auth, async (req, res) => {
 
     if (interview.applicationStatus !== 'open') {
       return res.status(400).json({ message: 'This interview is not available for applications' });
+    }
+
+    // Validate photo if verification is required
+    if (interview.identityVerificationRequired) {
+      if (!candidatePhoto || !candidatePhoto.startsWith('data:image')) {
+        return res.status(400).json({ 
+          message: 'Photo is required for this interview. Please upload your photo.',
+          photoRequired: true
+        });
+      }
+      
+      console.log('📸 Candidate photo received for application');
+      interview.candidateApplicationPhoto = candidatePhoto;
+      interview.candidateApplicationPhotoUploadedAt = new Date();
     }
 
     // Update interview with candidate and set to pending
@@ -74,7 +89,8 @@ router.post('/apply/:interviewId', auth, async (req, res) => {
 
     res.json({ 
       message: 'Application submitted successfully. Awaiting recruiter approval.',
-      interview 
+      interview,
+      photoUploaded: !!candidatePhoto
     });
   } catch (err) {
     console.error('Apply for interview error:', err);
@@ -177,6 +193,18 @@ router.post('/start', auth, async (req, res) => {
         });
       }
 
+      // ===================================================================
+      // CHECK IDENTITY VERIFICATION IF REQUIRED
+      // ===================================================================
+      if (existingInterview.identityVerificationRequired && !existingInterview.identityVerificationCompleted) {
+        return res.status(403).json({
+          message: 'Identity verification required before starting this interview',
+          verificationRequired: true,
+          verificationCompleted: false,
+          hint: 'Please complete identity verification first'
+        });
+      }
+
       // If interview is already in-progress, return existing questions (resume)
       if (existingInterview.status === 'in-progress') {
         return res.status(200).json({
@@ -185,22 +213,67 @@ router.post('/start', auth, async (req, res) => {
           questions: existingInterview.questions.map(q => ({ question: q.question, category: q.category })),
           stream: existingInterview.stream,
           difficulty: existingInterview.difficulty,
+          timeLimit: existingInterview.timeLimit || 30, // Include time limit when resuming
+          questionCount: existingInterview.questions.length, // Include question count
           currentQuestionIndex: existingInterview.currentQuestionIndex || 0
         });
       }
 
       // Generate questions for the accepted interview using REAL AI
-      const generatedQuestions = await AIService.generateQuestions(
-        existingInterview.stream, 
-        existingInterview.difficulty, 
-        5
-      );
+      // Mix custom questions with AI-generated questions
+      const customQuestions = existingInterview.customQuestions || [];
+      const customQuestionCount = customQuestions.length;
+      const aiQuestionCount = Math.max(0, (existingInterview.questionCount || 5) - customQuestionCount);
+      
+      console.log(`📊 Question Mix: ${customQuestionCount} custom + ${aiQuestionCount} AI = ${customQuestionCount + aiQuestionCount} total`);
+      
+      let generatedQuestions = [];
+      
+      // Add custom questions first
+      if (customQuestionCount > 0) {
+        generatedQuestions = customQuestions.map(cq => ({
+          question: cq.question,
+          category: 'Custom',
+          generatedAt: new Date(),
+          source: cq.addedBy || 'recruiter'
+        }));
+        console.log(`✅ Added ${customQuestionCount} custom questions`);
+      }
+      
+      // Generate AI questions if needed
+      if (aiQuestionCount > 0) {
+        const aiQuestions = await AIService.generateQuestions(
+          existingInterview.stream, 
+          existingInterview.difficulty, 
+          aiQuestionCount
+        );
+        generatedQuestions.push(...aiQuestions.map(q => ({
+          ...q,
+          source: 'ai'
+        })));
+        console.log(`✅ Generated ${aiQuestionCount} AI questions`);
+      }
+      
+      // Shuffle questions to mix custom and AI
+      const shuffledQuestions = generatedQuestions
+        .map(q => ({ q, sort: Math.random() }))
+        .sort((a, b) => a.sort - b.sort)
+        .map(({ q }) => q);
+      
+      console.log(`🔀 Shuffled ${shuffledQuestions.length} questions`);
+      
+      // Update question sources tracking
+      existingInterview.questionSources = {
+        aiGenerated: aiQuestionCount,
+        recruiterAdded: customQuestions.filter(q => q.addedBy === 'recruiter').length,
+        pdfExtracted: customQuestions.filter(q => q.addedBy === 'pdf').length
+      };
 
       // Get candidate name for dashboard display
       const Candidate = (await import('../models/Candidate.js')).default;
       const candidate = await Candidate.findById(existingInterview.candidateId);
       
-      existingInterview.questions = generatedQuestions;
+      existingInterview.questions = shuffledQuestions;
       existingInterview.status = 'in-progress';
       existingInterview.startTime = new Date();
       existingInterview.startedAt = new Date();
@@ -212,17 +285,19 @@ router.post('/start', auth, async (req, res) => {
         candidateId: existingInterview.candidateId,
         recruiterId: existingInterview.recruiterId,
         status: existingInterview.status,
-        startedAt: existingInterview.startedAt
+        startedAt: existingInterview.startedAt,
+        totalQuestions: shuffledQuestions.length,
+        timeLimit: existingInterview.timeLimit
       });
 
       // Save questions to database
-      const questionPromises = generatedQuestions.map(q => {
+      const questionPromises = shuffledQuestions.map(q => {
         const question = new Question({
           stream: existingInterview.stream,
           difficulty: existingInterview.difficulty,
           question: q.question,
           category: q.category,
-          isAiGenerated: true
+          isAiGenerated: q.source === 'ai'
         });
         return question.save().catch(err => console.log('Question save error:', err));
       });
@@ -232,9 +307,15 @@ router.post('/start', auth, async (req, res) => {
       return res.status(200).json({
         message: 'Interview started successfully',
         interviewId: existingInterview._id,
-        questions: generatedQuestions.map(q => ({ question: q.question, category: q.category })),
+        questions: shuffledQuestions.map(q => ({ 
+          question: q.question, 
+          category: q.category,
+          source: q.source 
+        })),
         stream: existingInterview.stream,
-        difficulty: existingInterview.difficulty
+        difficulty: existingInterview.difficulty,
+        timeLimit: existingInterview.timeLimit,
+        questionCount: shuffledQuestions.length
       });
     }
 
@@ -312,6 +393,20 @@ router.post('/submit-answer', auth, async (req, res) => {
 
     if (interview.candidateId.toString() !== req.candidate.id) {
       return res.status(403).json({ message: 'Unauthorized' });
+    }
+
+    // Check if interview time has expired
+    if (interview.startTime && interview.timeLimit) {
+      const startTime = new Date(interview.startTime);
+      const now = new Date();
+      const elapsedMinutes = Math.floor((now - startTime) / 1000 / 60);
+      
+      if (elapsedMinutes >= interview.timeLimit) {
+        return res.status(400).json({ 
+          message: 'Time limit exceeded. Interview will be auto-submitted.',
+          timeExpired: true
+        });
+      }
     }
 
     // Detect if answer is AI-generated using REAL AI
@@ -508,7 +603,7 @@ router.post('/report-face-detection', auth, async (req, res) => {
   }
 });
 
-// Complete interview
+// Complete interview with enhanced AI evaluation
 router.post('/complete', auth, async (req, res) => {
   try {
     const { interviewId } = req.body;
@@ -522,38 +617,261 @@ router.post('/complete', auth, async (req, res) => {
       return res.status(403).json({ message: 'Unauthorized' });
     }
 
+    // Ensure all required fields have defaults
+    if (!interview.questions) interview.questions = [];
+    if (!interview.malpractices) interview.malpractices = [];
+    if (typeof interview.tabSwitchCount !== 'number') interview.tabSwitchCount = 0;
+    if (typeof interview.voiceChangesDetected !== 'number') interview.voiceChangesDetected = 0;
+    if (typeof interview.aiAnswersDetected !== 'number') interview.aiAnswersDetected = 0;
+    if (typeof interview.noFaceDetected !== 'number') interview.noFaceDetected = 0;
+    if (typeof interview.multipleFacesDetected !== 'number') interview.multipleFacesDetected = 0;
+
     interview.endTime = new Date();
     interview.completedAt = new Date();
-    interview.duration = Math.round((interview.endTime - interview.startTime) / 60000); // in minutes
     
-    // Calculate score based on answers and malpractices
-    const score = AIService.calculateScore(interview.questions, interview.malpractices);
-    interview.score = score;
+    // Calculate duration safely
+    if (interview.startTime) {
+      interview.duration = Math.round((interview.endTime - interview.startTime) / 60000); // in minutes
+    } else if (interview.startedAt) {
+      interview.duration = Math.round((interview.endTime - interview.startedAt) / 60000); // in minutes
+    } else {
+      interview.duration = 0; // Default if no start time recorded
+    }
+    
+    console.log('\n' + '='.repeat(80));
+    console.log('🎯 COMPLETING INTERVIEW WITH ENHANCED AI EVALUATION');
+    console.log('='.repeat(80));
+    console.log(`Interview ID: ${interviewId}`);
+    console.log(`Candidate: ${interview.candidateId}`);
+    console.log(`Stream: ${interview.stream}`);
+    console.log(`Difficulty: ${interview.difficulty}`);
+    console.log(`Duration: ${interview.duration} minutes`);
+    console.log('='.repeat(80) + '\n');
 
-    // Determine status based on malpractices
-    const highSeverityCount = interview.malpractices.filter(m => m.severity === 'high').length;
-    interview.flagged = highSeverityCount > 2;
-    interview.status = interview.flagged ? 'flagged' : 'completed';
+    // Calculate basic score first (fallback)
+    const answeredQuestions = interview.questions.filter(q => q.answer && q.answer.trim()).length;
+    const totalQuestions = interview.questions.length;
+    const baseScore = totalQuestions > 0 ? (answeredQuestions / totalQuestions) * 100 : 0;
+    const malpracticeDeduction = Math.min(interview.malpractices.length * 5, 40); // Max 40 point deduction
+    const basicScore = Math.max(0, Math.round(baseScore - malpracticeDeduction));
 
-    await interview.save();
+    // Try enhanced AI evaluation, but always have fallback
+    let evaluationSuccess = false;
+    try {
+      console.log('🤖 Attempting enhanced AI evaluation...');
+      const evaluationResult = await AIService.evaluateInterviewComprehensive({
+        questions: interview.questions || [],
+        malpractices: interview.malpractices || [],
+        duration: interview.duration || 0,
+        jobDescription: interview.jobDescription || '',
+        stream: interview.stream || 'General',
+        difficulty: interview.difficulty || 'Medium'
+      });
 
-    res.json({
+      if (evaluationResult && typeof evaluationResult.score === 'number') {
+        // Update interview with comprehensive evaluation results
+        interview.score = evaluationResult.score;
+        interview.enhancedEvaluation = evaluationResult.enhancedEvaluation || {};
+        
+        // Recommendation must be one of: 'Strong Hire', 'Hire', 'Maybe', 'No Hire'
+        const validRecommendations = ['Strong Hire', 'Hire', 'Maybe', 'No Hire'];
+        const resultRec = evaluationResult.recommendation || '';
+        if (validRecommendations.includes(resultRec)) {
+          interview.recommendation = resultRec;
+        } else {
+          // Map common variations to valid values
+          const recLower = resultRec.toLowerCase();
+          if (recLower.includes('highly') || recLower.includes('strong')) {
+            interview.recommendation = 'Strong Hire';
+          } else if (recLower.includes('hire') || recLower.includes('consider')) {
+            interview.recommendation = 'Hire';
+          } else if (recLower.includes('maybe') || recLower.includes('review')) {
+            interview.recommendation = 'Maybe';
+          } else {
+            interview.recommendation = 'No Hire';
+          }
+        }
+        
+        interview.pros = Array.isArray(evaluationResult.pros) ? evaluationResult.pros : [];
+        interview.cons = Array.isArray(evaluationResult.cons) ? evaluationResult.cons : [];
+        interview.overallAssessment = evaluationResult.overallAssessment || 'Interview evaluated';
+        
+        // aiConfidenceLevel should be a number (0-100), not a string
+        if (typeof evaluationResult.aiConfidenceLevel === 'number') {
+          interview.aiConfidenceLevel = Math.min(100, Math.max(0, evaluationResult.aiConfidenceLevel));
+        } else {
+          interview.aiConfidenceLevel = 70; // Default confidence level
+        }
+
+        // Determine status based on malpractices and evaluation
+        const highSeverityCount = interview.malpractices.filter(m => m.severity === 'high').length;
+        interview.flagged = highSeverityCount > 2 || interview.recommendation === 'No Hire';
+        interview.status = interview.flagged ? 'flagged' : 'completed';
+        
+        evaluationSuccess = true;
+        console.log('✅ Enhanced AI evaluation successful');
+      } else {
+        throw new Error('Invalid evaluation result');
+      }
+    } catch (aiError) {
+      console.error('❌ AI Evaluation failed:', aiError.message);
+      console.log('⚠️ Using basic evaluation fallback...');
+      evaluationSuccess = false;
+    }
+
+    // Use basic evaluation if AI failed
+    if (!evaluationSuccess) {
+      interview.score = basicScore;
+      interview.status = 'completed';
+      interview.flagged = interview.malpractices.filter(m => m.severity === 'high').length > 2;
+      
+      // Use valid enum values for recommendation: 'Strong Hire', 'Hire', 'Maybe', 'No Hire'
+      if (interview.score >= 80) {
+        interview.recommendation = 'Strong Hire';
+      } else if (interview.score >= 70) {
+        interview.recommendation = 'Hire';
+      } else if (interview.score >= 50) {
+        interview.recommendation = 'Maybe';
+      } else {
+        interview.recommendation = 'No Hire';
+      }
+      
+      interview.overallAssessment = `Interview completed with ${answeredQuestions}/${totalQuestions} questions answered. Score: ${interview.score}/100`;
+      interview.pros = answeredQuestions > 0 ? ['Completed the interview'] : [];
+      interview.cons = interview.malpractices.length > 0 ? ['Malpractices detected'] : [];
+      // Don't set enhancedEvaluation to avoid schema issues
+    }
+
+    // Ensure all required fields are set before saving
+    if (!interview.status) interview.status = 'completed';
+    if (typeof interview.score !== 'number') interview.score = basicScore;
+    if (!interview.recommendation || !['Strong Hire', 'Hire', 'Maybe', 'No Hire'].includes(interview.recommendation)) {
+      interview.recommendation = 'Maybe'; // Safe default
+    }
+    if (!interview.overallAssessment) interview.overallAssessment = 'Interview completed';
+    if (!Array.isArray(interview.pros)) interview.pros = [];
+    if (!Array.isArray(interview.cons)) interview.cons = [];
+
+    // Save interview with error handling
+    try {
+      await interview.save();
+      console.log('✅ Interview data saved successfully');
+    } catch (saveError) {
+      console.error('❌ Primary save failed:', saveError.message);
+      console.log('⚠️ Attempting minimal save...');
+      
+      try {
+        // Remove potentially problematic fields
+        if (interview.enhancedEvaluation && typeof interview.enhancedEvaluation === 'object' && Object.keys(interview.enhancedEvaluation).length === 0) {
+          delete interview.enhancedEvaluation;
+        }
+        
+        // Ensure basic fields are set with valid values
+        interview.score = interview.score || basicScore;
+        interview.status = 'completed';
+        // Ensure recommendation is a valid enum value
+        if (!interview.recommendation || !['Strong Hire', 'Hire', 'Maybe', 'No Hire'].includes(interview.recommendation)) {
+          interview.recommendation = 'Maybe';
+        }
+        interview.overallAssessment = interview.overallAssessment || 'Interview completed';
+        
+        await interview.save();
+        console.log('✅ Minimal save successful');
+      } catch (retryError) {
+        console.error('❌ Retry save also failed:', retryError.message);
+        // Don't throw - we'll return what we have
+      }
+    }
+
+    console.log('\n' + '='.repeat(80));
+    console.log('✅ INTERVIEW COMPLETED SUCCESSFULLY');
+    console.log('='.repeat(80));
+    console.log(`Final Score: ${interview.score}/100`);
+    console.log(`Recommendation: ${interview.recommendation || 'N/A'}`);
+    console.log(`Status: ${interview.status}`);
+    console.log(`Flagged: ${interview.flagged}`);
+    console.log(`Method: ${evaluationSuccess ? 'AI Enhanced' : 'Basic'}`);
+    console.log('='.repeat(80) + '\n');
+
+    // Ensure final score is set
+    if (typeof interview.score !== 'number' || isNaN(interview.score)) {
+      console.warn('⚠️ Score not set properly, using basic score');
+      interview.score = basicScore;
+    }
+
+    // Build response object safely
+    const response = {
       message: 'Interview completed successfully',
-      score: interview.score,
-      status: interview.status,
-      duration: interview.duration,
+      score: interview.score || 0,
+      status: interview.status || 'completed',
+      duration: interview.duration || 0,
+      recommendation: interview.recommendation || 'Maybe', // Use valid enum value
       malpracticesSummary: {
-        total: interview.malpractices.length,
-        tabSwitches: interview.tabSwitchCount,
-        voiceChanges: interview.voiceChangesDetected,
-        aiAnswers: interview.aiAnswersDetected
+        total: (interview.malpractices || []).length,
+        tabSwitches: interview.tabSwitchCount || 0,
+        voiceChanges: interview.voiceChangesDetected || 0,
+        aiAnswers: interview.aiAnswersDetected || 0,
+        noFaceDetected: interview.noFaceDetected || 0,
+        multipleFacesDetected: interview.multipleFacesDetected || 0
       },
-      flagged: interview.status === 'flagged'
-    });
+      flagged: interview.status === 'flagged' || interview.flagged === true
+    };
+    if (interview.enhancedEvaluation && typeof interview.enhancedEvaluation === 'object') {
+      try {
+        // Extract tone analysis safely
+        let toneAnalysisText = 'N/A';
+        if (interview.enhancedEvaluation.toneAnalysis) {
+          if (typeof interview.enhancedEvaluation.toneAnalysis === 'string') {
+            toneAnalysisText = interview.enhancedEvaluation.toneAnalysis;
+          } else if (interview.enhancedEvaluation.toneAnalysis.overallTone) {
+            toneAnalysisText = interview.enhancedEvaluation.toneAnalysis.overallTone;
+          }
+        }
+        
+        response.enhancedEvaluation = {
+          overallQualityScore: interview.enhancedEvaluation.overallQualityScore || interview.score || 0,
+          toneAnalysis: toneAnalysisText,
+          paceAnalysis: interview.enhancedEvaluation.paceAnalysis || 'N/A',
+          comparedToAverage: interview.enhancedEvaluation.comparedToAverage || 'N/A'
+        };
+      } catch (evalError) {
+        console.error('Error accessing enhancedEvaluation properties:', evalError.message);
+        response.enhancedEvaluation = {
+          overallQualityScore: interview.score || 0,
+          toneAnalysis: 'Basic evaluation used',
+          paceAnalysis: 'Basic evaluation used',
+          comparedToAverage: 'Not available'
+        };
+      }
+    } else {
+      response.enhancedEvaluation = {
+        overallQualityScore: interview.score || 0,
+        toneAnalysis: 'Basic evaluation used',
+        paceAnalysis: 'Basic evaluation used',
+        comparedToAverage: 'Not available'
+      };
+    }
+
+    res.json(response);
 
   } catch (err) {
-    console.error('Complete interview error:', err);
-    res.status(500).json({ message: 'Server error', error: err.message });
+    console.error('\n' + '='.repeat(80));
+    console.error('❌ COMPLETE INTERVIEW ERROR');
+    console.error('='.repeat(80));
+    console.error('Error name:', err.name);
+    console.error('Error message:', err.message);
+    console.error('Error stack:', err.stack);
+    console.error('Interview ID:', req.body.interviewId);
+    console.error('Candidate ID:', req.candidate ? req.candidate.id : 'N/A');
+    console.error('='.repeat(80) + '\n');
+    
+    // Return a structured error response
+    res.status(500).json({ 
+      message: 'Failed to complete interview', 
+      error: err.message,
+      errorType: err.name,
+      details: process.env.NODE_ENV === 'development' ? err.stack : 'Contact support for assistance'
+    });
   }
 });
 
@@ -572,6 +890,33 @@ router.get('/:interviewId', auth, async (req, res) => {
     if (interview.candidateId._id.toString() !== req.candidate.id && 
         interview.recruiterId._id.toString() !== req.candidate.id) {
       return res.status(403).json({ message: 'Unauthorized' });
+    }
+
+    // Auto-complete interview if time limit exceeded
+    if (interview.status === 'in-progress' && interview.startTime && interview.timeLimit) {
+      const startTime = new Date(interview.startTime);
+      const now = new Date();
+      const elapsedMinutes = Math.floor((now - startTime) / 1000 / 60);
+      
+      if (elapsedMinutes >= interview.timeLimit) {
+        console.log(`⏰ Interview ${interview._id} time limit exceeded (${elapsedMinutes}/${interview.timeLimit} min) - auto-completing...`);
+        
+        // Auto-complete the interview
+        interview.status = 'completed';
+        interview.endTime = now;
+        interview.duration = Math.round((interview.endTime - interview.startTime) / 60000); // in minutes
+        interview.autoSubmitted = true; // Flag to indicate auto-submission
+        
+        // Calculate score (penalize for time expiration)
+        const answeredQuestions = interview.questions.filter(q => q.answer).length;
+        const totalQuestions = interview.questions.length;
+        const baseScore = totalQuestions > 0 ? (answeredQuestions / totalQuestions) * 70 : 0;
+        interview.score = Math.round(baseScore); // Max 70% for auto-submit due to time
+        
+        await interview.save();
+        
+        console.log(`✅ Interview auto-completed with score: ${interview.score}/100`);
+      }
     }
 
     res.json(interview);

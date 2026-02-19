@@ -18,6 +18,7 @@ export default function CandidateDashboard() {
   const [profile, setProfile] = useState(null);
   const [showEdit, setShowEdit] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [activeView, setActiveView] = useState('browse'); // 'browse', 'start', or 'analytics'
   useEffect(() => {
@@ -57,7 +58,46 @@ export default function CandidateDashboard() {
 
   const handleSaveProfile = async (updated) => {
     try {
+      setSaving(true);
       const token = localStorage.getItem('candidateToken');
+      
+      // If resume file is provided, parse it using Python backend
+      if (updated.resumeFile && updated.resumeFile.base64 && updated.resumeFile.type) {
+        console.log('📋 Sending resume to Python backend for extraction and parsing...');
+        
+        const parseRes = await fetch(`${API_URL}/candidate/resume/parse`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ 
+            fileBase64: updated.resumeFile.base64,
+            fileType: updated.resumeFile.type
+          })
+        });
+
+        const parseData = await parseRes.json();
+        
+        if (parseRes.ok && parseData.extractedData) {
+          console.log('✅ Resume parsed successfully. Profile completeness:', parseData.profileCompleteness);
+          
+          // Update profile was already done by the parse endpoint
+          // Just refresh the profile data
+          setProfile(parseData.profile);
+          setShowEdit(false);
+          setSaving(false);
+          alert(`✅ Resume parsed successfully!\n\nProfile completeness: ${parseData.profileCompleteness}%\n\nExtracted:\n- Name: ${parseData.extractedData.personalDetails?.fullName || 'N/A'}\n- Skills: ${parseData.extractedData.skills?.hardSkills?.length || 0} hard skills\n- Experience: ${parseData.extractedData.workExperience?.length || 0} positions`);
+          return;
+        } else {
+          console.warn('⚠️ Resume parsing failed:', parseData.error);
+          alert(`Failed to parse resume: ${parseData.message}\n\n${parseData.hint || ''}`);
+          setSaving(false);
+          return;
+        }
+      }
+      
+      // Regular profile update (when no resume or parsing failed)
       const res = await fetch(`${API_URL}/candidate/profile`, {
         method: 'PUT',
         headers: {
@@ -76,7 +116,9 @@ export default function CandidateDashboard() {
       if (!res.ok) throw new Error(data.message || 'Could not update profile');
       setProfile(data);
       setShowEdit(false);
+      setSaving(false);
     } catch (err) {
+      setSaving(false);
       alert(err.message);
     }
   };
@@ -243,7 +285,12 @@ export default function CandidateDashboard() {
           </section>
         </main>
         {showEdit && (
-          <EditProfileModal profile={profile} onSave={handleSaveProfile} onClose={() => setShowEdit(false)} />
+          <EditProfileModal 
+            profile={profile} 
+            onSave={handleSaveProfile} 
+            onClose={() => setShowEdit(false)} 
+            saving={saving}
+          />
         )}
       </div>
     </div>

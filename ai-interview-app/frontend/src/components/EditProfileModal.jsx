@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import './EditProfileModal.css';
 
-export default function EditProfileModal({ profile, onSave, onClose }) {
+export default function EditProfileModal({ profile, onSave, onClose, saving }) {
   const [form, setForm] = useState({
     name: profile.name || '',
     email: profile.email || '',
@@ -13,6 +13,8 @@ export default function EditProfileModal({ profile, onSave, onClose }) {
     resume: profile.resume || null,
   });
   const [resumeName, setResumeName] = useState(profile.resumeName || '');
+  const [resumeFile, setResumeFile] = useState(null); // Store file for Python processing
+  const [loading, setLoading] = useState(false);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -28,13 +30,44 @@ export default function EditProfileModal({ profile, onSave, onClose }) {
     }
   };
 
-  const handleResumeChange = (e) => {
+  const handleResumeChange = async (e) => {
     const file = e.target.files[0];
-    if (file) {
-      setResumeName(file.name);
+    if (!file) return;
+
+    setResumeName(file.name);
+    setLoading(true);
+
+    try {
+      // Get file extension
+      const fileExtension = file.name.split('.').pop().toLowerCase();
+      
+      // Read file as base64
       const reader = new FileReader();
-      reader.onload = (ev) => setForm((prev) => ({ ...prev, resume: ev.target.result }));
+      reader.onload = (ev) => {
+        const base64Content = ev.target.result;
+        
+        // Store file data for backend processing
+        setResumeFile({
+          base64: base64Content,
+          type: fileExtension,
+          name: file.name
+        });
+        
+        setForm((prev) => ({ ...prev, resume: base64Content }));
+        setLoading(false);
+      };
+      
+      reader.onerror = () => {
+        alert('Failed to read file. Please try again.');
+        setLoading(false);
+      };
+      
       reader.readAsDataURL(file);
+      
+    } catch (err) {
+      console.error('Error reading file:', err);
+      alert('Failed to read file. Please try again.');
+      setLoading(false);
     }
   };
 
@@ -44,6 +77,7 @@ export default function EditProfileModal({ profile, onSave, onClose }) {
       ...form,
       skills: form.skills.split(',').map((s) => s.trim()).filter(Boolean),
       resumeName,
+      resumeFile: resumeFile || null, // Include file data for Python extraction
     };
     onSave(updatedProfile);
   };
@@ -69,31 +103,34 @@ export default function EditProfileModal({ profile, onSave, onClose }) {
           <label>Skills (comma separated)
             <input name="skills" value={form.skills} onChange={handleChange} placeholder="e.g. React, Node.js, Python" />
           </label>
-          <label>Stream
-            <select name="stream" value={form.stream} onChange={handleChange} required>
-              <option value="">Select your stream</option>
-              <option value="Computer Science">Computer Science</option>
-              <option value="Information Technology">Information Technology</option>
-              <option value="Mechanical Engineering">Mechanical Engineering</option>
-              <option value="Electrical Engineering">Electrical Engineering</option>
-              <option value="Civil Engineering">Civil Engineering</option>
-              <option value="Business Management">Business Management</option>
-              <option value="Marketing">Marketing</option>
-              <option value="Finance">Finance</option>
-              <option value="Data Science">Data Science</option>
-              <option value="AI/ML">AI/ML</option>
-            </select>
-          </label>
           <label>Bio
             <textarea name="bio" value={form.bio} onChange={handleChange} rows={3} />
           </label>
           <label>Resume (PDF or DOC)
-            <input type="file" accept=".pdf,.doc,.docx" onChange={handleResumeChange} />
-            {resumeName && <span style={{ fontSize: '0.95em', color: '#6366f1' }}>{resumeName}</span>}
+            <input 
+              type="file" 
+              accept=".pdf,.doc,.docx" 
+              onChange={handleResumeChange} 
+              disabled={loading || saving}
+            />
+            {loading && <span style={{ fontSize: '0.95em', color: '#f59e0b' }}>⏳ Reading file...</span>}
+            {!loading && resumeName && <span style={{ fontSize: '0.95em', color: '#6366f1' }}>✓ {resumeName}</span>}
           </label>
           <div className="modal-actions">
-            <button type="submit">Save</button>
-            <button type="button" onClick={onClose} className="cancel">Cancel</button>
+            <button 
+              type="submit" 
+              disabled={loading || saving}
+            >
+              {saving ? '💾 Parsing & Saving...' : 'Save'}
+            </button>
+            <button 
+              type="button" 
+              onClick={onClose} 
+              className="cancel"
+              disabled={saving}
+            >
+              Cancel
+            </button>
           </div>
         </form>
       </div>

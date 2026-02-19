@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Filter, BookOpen, Award, User, Clock, CheckCircle, Trash2, RefreshCw } from 'lucide-react';
+import { Search, Filter, BookOpen, Award, User, Clock, CheckCircle, Trash2, RefreshCw, FileText, Briefcase, Star } from 'lucide-react';
 import './InterviewBrowser.css';
 
 const API_URL = import.meta.env.VITE_API_URL;
@@ -13,6 +13,7 @@ export default function InterviewBrowser() {
   const [deletingId, setDeletingId] = useState(null);
   const [view, setView] = useState('available'); // 'available' or 'myApplications'
   const [lastRefresh, setLastRefresh] = useState(Date.now());
+  const [selectedInterview, setSelectedInterview] = useState(null); // For showing job details modal
 
   const streams = [
     'All',
@@ -109,7 +110,23 @@ export default function InterviewBrowser() {
         throw new Error(data.message || 'Failed to apply');
       }
 
-      alert('Application submitted successfully! The recruiter will review your application.');
+      let message = 'Application submitted successfully! The recruiter will review your application.';
+      if (data.atsScore !== null && data.atsScore !== undefined) {
+        message += `\n\n📊 Your ATS Score: ${data.atsScore}%`;
+        if (data.atsScore >= 80) {
+          message += '\n✅ Excellent match!';
+        } else if (data.atsScore >= 60) {
+          message += '\n👍 Good match!';
+        } else if (data.atsScore >= 40) {
+          message += '\n💡 Consider match.';
+        } else {
+          message += '\n⚠️ Upload a detailed resume to improve your score.';
+        }
+      } else {
+        message += '\n\n💡 Tip: Upload your resume in your profile to get an ATS score!';
+      }
+      
+      alert(message);
       fetchAvailableInterviews(); // Refresh the list
     } catch (err) {
       console.error('Error applying for interview:', err);
@@ -285,6 +302,13 @@ export default function InterviewBrowser() {
                   </div>
 
                   <div className="card-body">
+                    {interview.title && (
+                      <div className="job-title">
+                        <Briefcase size={16} />
+                        <strong>{interview.title}</strong>
+                      </div>
+                    )}
+                    
                     <div className="interview-details">
                       <div className="detail-row">
                         <BookOpen size={18} />
@@ -297,6 +321,31 @@ export default function InterviewBrowser() {
                         </span>
                       </div>
                     </div>
+                    
+                    {interview.jobDescription && (
+                      <button 
+                        className="view-jd-btn"
+                        onClick={() => setSelectedInterview(interview)}
+                        style={{
+                          color: 'black',
+                          marginTop: '10px',
+                          padding: '6px 12px',
+                          background: '#f0f0f0',
+                          border: 'none',
+                          borderRadius: '4px',
+                          cursor: 'pointer',
+                          fontSize: '0.85rem',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '5px',
+                          width: '100%',
+                          justifyContent: 'center'
+                        }}
+                      >
+                        <FileText size={14} />
+                        View Job Description
+                      </button>
+                    )}
                   </div>
 
                   <div className="card-footer">
@@ -400,6 +449,118 @@ export default function InterviewBrowser() {
             </div>
           )}
         </>
+      )}
+      
+      {/* Job Description Modal */}
+      {selectedInterview && (
+        <div className="modal-overlay" onClick={() => setSelectedInterview(null)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}
+            style={{
+              maxWidth: '700px',
+              maxHeight: '80vh',
+              overflow: 'auto'
+            }}
+          >
+            <div className="modal-header">
+              <h2>{selectedInterview.title || 'Job Details'}</h2>
+              <button 
+                className="close-btn" 
+                onClick={() => setSelectedInterview(null)}
+                style={{ background: 'none', border: 'none', fontSize: '24px', cursor: 'pointer' }}
+              >
+                ×
+              </button>
+            </div>
+            
+            <div style={{ padding: '20px' }}>
+              {selectedInterview.company && (
+                <div style={{ marginBottom: '15px' , color: '#000000'}}>
+                  <strong>Company:</strong> {selectedInterview.company}
+                </div>
+              )}
+              
+              <div style={{ marginBottom: '15px' , color: '#000000'}}>
+                <strong>Stream:</strong> {selectedInterview.stream}
+              </div>
+              
+              <div style={{ marginBottom: '15px' , color: '#000000'}}>
+                <strong>Difficulty:</strong> <span className={`difficulty-badge ${getDifficultyColor(selectedInterview.difficulty)}`}>
+                  {selectedInterview.difficulty}
+                </span>
+              </div>
+              
+              {selectedInterview.requiredSkills && selectedInterview.requiredSkills.length > 0 && (
+                <div style={{ marginBottom: '15px' , color: '#000000'}}>
+                  <strong>Required Skills:</strong>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '8px' }}>
+                    {selectedInterview.requiredSkills.map((skill, idx) => (
+                      <span key={idx} style={{
+                        background: '#667eea',
+                        color: 'white',
+                        padding: '4px 12px',
+                        borderRadius: '12px',
+                        fontSize: '0.85rem'
+                      }}>
+                        {skill}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              
+              {selectedInterview.preferredSkills && selectedInterview.preferredSkills.length > 0 && (
+                <div style={{ marginBottom: '15px' , color: '#000000'}}>
+                  <strong>Preferred Skills:</strong>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '8px' }}>
+                    {selectedInterview.preferredSkills.map((skill, idx) => (
+                      <span key={idx} style={{
+                        color: '#000000',
+                        background: '#e0e0e0',
+    
+                        padding: '4px 12px',
+                        borderRadius: '12px',
+                        fontSize: '0.85rem'
+                      }}>
+                        {skill}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              
+              {selectedInterview.jobDescription && (
+                <div style={{ marginTop: '20px' }}>
+                  <strong>Job Description:</strong>
+                  <div style={{
+                    color :'black',
+                    marginTop: '10px',
+                    padding: '15px',
+                    background: '#f9f9f9',
+                    borderRadius: '8px',
+                    whiteSpace: 'pre-wrap',
+                    lineHeight: '1.6'
+                  }}>
+                    {selectedInterview.jobDescription}
+                  </div>
+                </div>
+              )}
+              
+              <div style={{ marginTop: '20px', display: 'flex', gap: '10px' }}>
+                <button
+                  className="apply-btn"
+                  onClick={() => {
+                    setSelectedInterview(null);
+                    handleApply(selectedInterview._id);
+                  }}
+                  disabled={applying === selectedInterview._id}
+                  style={{ flex: 1 }}
+                >
+                  {applying === selectedInterview._id ? 'Applying...' : 'Apply for this Position'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

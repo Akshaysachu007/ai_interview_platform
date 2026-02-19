@@ -17,13 +17,16 @@ import adminRoutes from './routes/admin.js';
 import paymentRoutes from './routes/payment.js';
 import interviewRoutes from './routes/interview.js';
 import notificationRoutes from './routes/notification.js';
+import identityVerificationRoutes from './routes/identityVerification.js';
 import Admin from './models/Admin.js';
 
 dotenv.config();
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+// Increase payload limit to handle large base64 encoded files (avatars, resumes)
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
@@ -36,6 +39,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/payment', paymentRoutes);
 app.use('/api/interview', interviewRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/identity-verification', identityVerificationRoutes);
 
 // Global error handler
 app.use((err, req, res, next) => {

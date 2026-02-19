@@ -24,6 +24,9 @@ const AIInterview = () => {
   const [interviewStarted, setInterviewStarted] = useState(false);
   const [interviewCompleted, setInterviewCompleted] = useState(false);
   const [results, setResults] = useState(null);
+  const [timeLimit, setTimeLimit] = useState(30); // in minutes
+  const [remainingTime, setRemainingTime] = useState(null); // in seconds
+  const [timerWarningShown, setTimerWarningShown] = useState({ fiveMin: false, oneMin: false });
   const [malpractices, setMalpractices] = useState({
     tabSwitches: 0,
     aiDetections: 0,
@@ -46,6 +49,10 @@ const AIInterview = () => {
   const [lastViolationType, setLastViolationType] = useState(null);
   const noFaceCountRef = useRef(0);
   const multipleFaceCountRef = useRef(0);
+  const detectionInFlightRef = useRef(false);
+  const lastSnapshotAtRef = useRef(0);
+  const detectionCanvasRef = useRef(null);
+  const recentFaceCountsRef = useRef([]);
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
@@ -65,27 +72,64 @@ const AIInterview = () => {
 
   const difficulties = ['Easy', 'Medium', 'Hard'];
 
-  // Load face detection model on component mount
-  useEffect(() => {
-    const loadFaceDetectionModel = async () => {
+  // Face detection model loading function (can be called multiple times)
+  const loadFaceDetectionModel = async () => {
+    const maxRetries = 3;
+    let attempt = 0;
+    
+    while (attempt < maxRetries) {
       try {
-        console.log('📦 Loading face detection model...');
+        console.log(`📦 Loading face detection model... (Attempt ${attempt + 1}/${maxRetries})`);
         setModelLoading(true);
         
-        // Load BlazeFace model
-        const model = await blazeface.load();
-        setFaceDetectionModel(model);
-        
-        console.log('✅ Face detection model loaded successfully!');
-        setModelLoading(false);
-      } catch (error) {
-        console.error('❌ Error loading face detection model:', error);
-        alert('⚠️ Could not load face detection model. Using basic detection.');
-        setModelLoading(false);
-      }
-    };
+        if (tf.getBackend() !== 'webgl') {
+          await tf.setBackend('webgl');
+        }
 
+        // Wait for TensorFlow.js to be ready
+        await tf.ready();
+        console.log('✅ TensorFlow.js backend ready:', tf.getBackend());
+        
+        // Load BlazeFace model with explicit configuration
+        const model = await blazeface.load({
+          maxFaces: 3, // Keep this small for speed while still catching multiple faces
+          iouThreshold: 0.5, // Reduce duplicate boxes for the same face
+          scoreThreshold: 0.6 // Improve sensitivity for partial/low-light faces
+        });
+        
+        setFaceDetectionModel(model);
+        console.log('✅ Face detection model loaded successfully!');
+        console.log('   - Max faces:', 3);
+        console.log('   - Score threshold:', 0.6);
+        setModelLoading(false);
+        return; // Success, exit retry loop
+      } catch (error) {
+        attempt++;
+        console.error(`❌ Error loading face detection model (Attempt ${attempt}/${maxRetries}):`, error);
+        
+        if (attempt >= maxRetries) {
+          console.error('⚠️ Could not load face detection model after ' + maxRetries + ' attempts.');
+          setModelLoading(false);
+          setFaceDetectionModel(null);
+        } else {
+          // Wait before retry (exponential backoff)
+          await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+        }
+      }
+    }
+  };
+
+  // Load face detection model on component mount with retry logic
+  useEffect(() => {
     loadFaceDetectionModel();
+    
+    // Check if there's an active interview in localStorage (page refresh)
+    const activeInterviewId = localStorage.getItem('activeInterviewId');
+    if (activeInterviewId && !acceptedInterviewId) {
+      console.log('🔄 Detected active interview from localStorage:', activeInterviewId);
+      // Load the interview data
+      loadAcceptedInterview(activeInterviewId);
+    }
   }, []);
 
   // Load interview details if coming from accepted application
@@ -158,46 +202,123 @@ const AIInterview = () => {
     };
   }, [interviewStarted, interviewCompleted, interviewId]);
 
-  // Webcam functionality
-  const startWebcam = async () => {
-    try {
-      console.log('🎥 Requesting webcam access...');
-      
-      // Stop any existing stream first
-      if (streamRef.current) {
-        console.log('🛑 Stopping existing stream...');
-        streamRef.current.getTracks().forEach(track => track.stop());
-        streamRef.current = null;
-      }
-      
-      const mediaStream = await navigator.mediaDevices.getUserMedia({ 
-        video: { 
-          width: { ideal: 640 },
-          height: { ideal: 480 },
-          facingMode: 'user'
-        } 
+  // Interview timer countdown
+  useEffect(() => {
+    if (!interviewStarted || interviewCompleted || remainingTime === null) return;
+
+    const timerInterval = setInterval(() => {
+      setRemainingTime(prevTime => {
+        if (prevTime <= 1) {
+          // Time's up - auto-submit interview
+          clearInterval(timerInterval);
+          alert('⏰ Time\'s up! Your interview will be submitted automatically.');
+          completeInterview();
+          return 0;
+        }
+
+        const newTime = prevTime - 1;
+        const minutesLeft = Math.floor(newTime / 60);
+
+        // Show 5-minute warning
+        if (minutesLeft === 5 && !timerWarningShown.fiveMin) {
+          setTimerWarningShown(prev => ({ ...prev, fiveMin: true }));
+          alert('⚠️ 5 minutes remaining! Please wrap up your answers.');
+        }
+
+        // Show 1-minute warning
+        if (minutesLeft === 1 && !timerWarningShown.oneMin) {
+          setTimerWarningShown(prev => ({ ...prev, oneMin: true }));
+          alert('⚠️ Only 1 minute left!');
+        }
+
+        return newTime;
       });
-      
-      console.log('✅ Webcam access granted, stream tracks:', mediaStream.getTracks().length);
-      console.log('Stream active:', mediaStream.active);
-      console.log('Stream ID:', mediaStream.id);
-      
-      if (!videoRef.current) {
-        console.error('❌ Video ref is null');
-        setWebcamActive(true);
-        return;
-      }
-      
-      console.log('📹 Setting video srcObject...');
-      
-      // Clear any existing srcObject
-      if (videoRef.current.srcObject) {
-        videoRef.current.srcObject = null;
-      }
-      
-      // Set the new stream
-      videoRef.current.srcObject = mediaStream;
-      streamRef.current = mediaStream;
+    }, 1000);
+
+    return () => clearInterval(timerInterval);
+  }, [interviewStarted, interviewCompleted, remainingTime, timerWarningShown]);
+
+  // Webcam functionality with improved reliability
+  const startWebcam = async () => {
+    const maxRetries = 3;
+    let attempt = 0;
+    
+    while (attempt < maxRetries) {
+      try {
+        console.log(`🎥 Requesting webcam access... (Attempt ${attempt + 1}/${maxRetries})`);
+        
+        // Stop any existing stream first
+        if (streamRef.current) {
+          console.log('🛑 Stopping existing stream...');
+          streamRef.current.getTracks().forEach(track => track.stop());
+          streamRef.current = null;
+        }
+        
+        // Clear video element
+        if (videoRef.current && videoRef.current.srcObject) {
+          videoRef.current.srcObject = null;
+        }
+        
+        // Check if getUserMedia is supported
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          throw new Error('getUserMedia is not supported in this browser');
+        }
+        
+        // Request camera access with enhanced constraints
+        const mediaStream = await navigator.mediaDevices.getUserMedia({ 
+          video: { 
+            width: { min: 320, ideal: 640, max: 1280 },
+            height: { min: 240, ideal: 480, max: 720 },
+            facingMode: 'user',
+            frameRate: { ideal: 30 }
+          },
+          audio: false // Explicitly disable audio
+        });
+        
+        console.log('✅ Webcam access granted');
+        console.log('   - Stream tracks:', mediaStream.getTracks().length);
+        console.log('   - Stream active:', mediaStream.active);
+        console.log('   - Stream ID:', mediaStream.id);
+        
+        // Validate video tracks
+        const videoTracks = mediaStream.getVideoTracks();
+        if (videoTracks.length === 0) {
+          throw new Error('No video tracks available in stream');
+        }
+        
+        const videoTrack = videoTracks[0];
+        console.log('   - Video track label:', videoTrack.label);
+        console.log('   - Video track enabled:', videoTrack.enabled);
+        console.log('   - Video track ready state:', videoTrack.readyState);
+        
+        // Wait for video element to be available (with timeout)
+        if (!videoRef.current) {
+          console.log('⏳ Waiting for video element to be available...');
+          await new Promise((resolve, reject) => {
+            const checkInterval = setInterval(() => {
+              if (videoRef.current) {
+                clearInterval(checkInterval);
+                console.log('✅ Video element is now available');
+                resolve();
+              }
+            }, 100); // Check every 100ms
+            
+            // Timeout after 5 seconds
+            setTimeout(() => {
+              clearInterval(checkInterval);
+              if (!videoRef.current) {
+                console.error('❌ Video element not available after 5 seconds');
+                reject(new Error('Video element not available - please ensure the interview UI is loaded'));
+              }
+            }, 5000);
+          });
+        }
+        
+        console.log('📹 Attaching stream to video element...');
+        
+        // Set the new stream
+        videoRef.current.srcObject = mediaStream;
+        streamRef.current = mediaStream;
       
       // Explicitly set video attributes
       videoRef.current.muted = true;
@@ -205,58 +326,108 @@ const AIInterview = () => {
       videoRef.current.autoplay = true;
       videoRef.current.controls = false;
       
-      // Wait for video to load and be ready
+      // Wait for video to load metadata and be ready with improved timeout
       await new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
-          console.warn('⚠️ Video loading timeout, but continuing...');
-          resolve();
-        }, 5000);
+          console.warn('⚠️ Video loading timeout (10s), but continuing...');
+          resolve(); // Don't reject, just continue
+        }, 10000); // Increased to 10 seconds for slower devices
         
-        const checkVideo = () => {
-          if (videoRef.current && videoRef.current.readyState >= 2) {
+        const onLoadedMetadata = () => {
+          console.log('✅ Video metadata loaded');
+          console.log('   - Dimensions:', videoRef.current.videoWidth, 'x', videoRef.current.videoHeight);
+          checkVideoReady();
+        };
+        
+        const onCanPlay = () => {
+          console.log('✅ Video can play');
+          checkVideoReady();
+        };
+        
+        const checkVideoReady = () => {
+          if (videoRef.current && 
+              videoRef.current.readyState >= 2 && 
+              videoRef.current.videoWidth > 0 && 
+              videoRef.current.videoHeight > 0) {
             clearTimeout(timeout);
-            console.log('✅ Video ready!');
-            console.log('  - Dimensions:', videoRef.current.videoWidth, 'x', videoRef.current.videoHeight);
-            console.log('  - Ready state:', videoRef.current.readyState);
-            console.log('  - Paused:', videoRef.current.paused);
+            videoRef.current.removeEventListener('loadedmetadata', onLoadedMetadata);
+            videoRef.current.removeEventListener('canplay', onCanPlay);
+            console.log('✅ Video fully ready!');
+            console.log('   - Ready state:', videoRef.current.readyState);
+            console.log('   - Dimensions:', videoRef.current.videoWidth, 'x', videoRef.current.videoHeight);
             resolve();
-          } else {
-            setTimeout(checkVideo, 100);
           }
         };
-        checkVideo();
+        
+        // Listen to multiple events for better reliability
+        videoRef.current.addEventListener('loadedmetadata', onLoadedMetadata);
+        videoRef.current.addEventListener('canplay', onCanPlay);
+        
+        // Check immediately in case video is already ready
+        checkVideoReady();
       });
       
-      // Explicitly play the video
+      // Explicitly play the video with validation
       try {
-        await videoRef.current.play();
-        console.log('✅ Video play() successful');
-        console.log('  - Playing:', !videoRef.current.paused);
-        console.log('  - Current time:', videoRef.current.currentTime);
+        console.log('▶️ Starting video playback...');
+        const playPromise = videoRef.current.play();
+        
+        if (playPromise !== undefined) {
+          await playPromise;
+          console.log('✅ Video play() successful');
+        }
+        
+        // Validate video is actually playing
+        if (videoRef.current.paused) {
+          throw new Error('Video is paused after play() call');
+        }
+        
+        console.log('   - Playing:', !videoRef.current.paused);
+        console.log('   - Current time:', videoRef.current.currentTime);
+        console.log('   - Duration:', videoRef.current.duration);
         
         setWebcamActive(true);
         
-        // Start real-time face detection immediately after video is playing
+        // Start face detection only after confirming video is playing
         console.log('🎯 Starting continuous real-time face detection...');
         startFaceDetection();
+        
+        // Exit retry loop on success
+        return;
       } catch (playError) {
         console.error('❌ Video play error:', playError);
-        console.log('Attempting to set webcam active anyway...');
-        setWebcamActive(true);
+        throw playError; // Trigger retry
       }
       
     } catch (error) {
-      console.error('❌ Webcam access error:', error);
-      if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
-        alert('⚠️ Camera Permission Denied\n\nPlease:\n1. Click the camera icon in your browser address bar\n2. Allow camera access\n3. Refresh the page and start the interview again');
-      } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
-        alert('⚠️ No Camera Found\n\nPlease connect a camera and try again.');
+      attempt++;
+      console.error(`❌ Webcam access error (Attempt ${attempt}/${maxRetries}):`, error);
+      
+      if (attempt >= maxRetries) {
+        // Final failure - show appropriate error message
+        if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+          alert('⚠️ Camera Permission Denied\n\nPlease:\n1. Click the camera icon in your browser address bar\n2. Allow camera access\n3. Refresh the page and start the interview again\n\nNote: The interview cannot proceed without camera access for proctoring.');
+        } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
+          alert('⚠️ No Camera Found\n\nPlease connect a camera to your device and try again.\n\nThe interview requires a camera for proctoring.');
+        } else if (error.name === 'NotReadableError' || error.name === 'TrackStartError') {
+          alert('⚠️ Camera In Use\n\nYour camera is being used by another application.\n\nPlease:\n1. Close all other applications using your camera\n2. Refresh this page\n3. Try starting the interview again');
+        } else {
+          alert('⚠️ Camera Error\n\n' + error.message + '\n\nPlease refresh the page and try again.\nIf the problem persists, try restarting your browser.');
+        }
+        
+        // Don't set webcamActive on failure - interview should not proceed
+        setWebcamActive(false);
+        throw error; // Propagate error to calling function
       } else {
-        alert('⚠️ Could not access webcam: ' + error.message + '\n\nThe interview will continue without video monitoring.');
+        // Wait before retry with exponential backoff
+        console.log(`⏳ Retrying in ${1000 * attempt}ms...`);
+        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
       }
-      // Set webcamActive to true anyway so interview can proceed
-      setWebcamActive(true);
     }
+  }
+  
+  // If we reached here, all retries failed
+  throw new Error('Failed to start webcam after ' + maxRetries + ' attempts');
   };
 
   const stopWebcam = () => {
@@ -271,11 +442,20 @@ const AIInterview = () => {
     
     // Stop video stream
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current.getTracks().forEach(track => {
+        track.stop();
+        console.log('   - Track stopped:', track.label);
+      });
       streamRef.current = null;
     }
     
+    // Clear video element
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    
     setWebcamActive(false);
+    setFaceCount(0);
     console.log('✅ Webcam stopped completely');
   };
 
@@ -334,7 +514,7 @@ const AIInterview = () => {
     }
   };
 
-  // Real-time face detection using TensorFlow.js
+  // Real-time face detection using TensorFlow.js with improved accuracy
   const startFaceDetection = () => {
     // Clear any existing interval first
     if (detectionIntervalRef.current) {
@@ -343,33 +523,54 @@ const AIInterview = () => {
       detectionIntervalRef.current = null;
     }
     
-    // 🆕 CHECK IF MODEL IS LOADED
+    // CHECK IF MODEL IS LOADED
     if (!faceDetectionModel) {
       console.error('❌ Cannot start face detection: Model not loaded yet!');
       console.error('This should not happen - model should be loaded before calling this function');
       return;
     }
     
-    console.log('✅ Starting face detection with loaded model:', faceDetectionModel);
-    console.log('✅ Interview state - started:', interviewStarted, 'completed:', interviewCompleted);
+    // CHECK IF VIDEO IS READY
+    if (!videoRef.current || !videoRef.current.videoWidth || !videoRef.current.videoHeight) {
+      console.error('❌ Cannot start face detection: Video not ready yet!');
+      console.error('   - Video element:', !!videoRef.current);
+      console.error('   - Video dimensions:', videoRef.current?.videoWidth, 'x', videoRef.current?.videoHeight);
+      return;
+    }
     
-    // Start new detection interval - check every 2 seconds
-    detectionIntervalRef.current = setInterval(() => {
-      const shouldDetect = interviewStarted && !interviewCompleted && faceDetectionModel;
-      
-      if (shouldDetect) {
-        detectFacesWithML();
-      } else {
-        console.log('⏸️ Detection paused - started:', interviewStarted, 'completed:', interviewCompleted, 'model:', !!faceDetectionModel);
-        
-        if (!faceDetectionModel) {
-          console.warn('⚠️ Model became null during detection!');
-        }
+    console.log('✅ Starting face detection with loaded model');
+    console.log('   - Model loaded:', !!faceDetectionModel);
+    console.log('   - Video ready:', videoRef.current.readyState);
+    console.log('   - Video dimensions:', videoRef.current.videoWidth, 'x', videoRef.current.videoHeight);
+    console.log('   - Interview started:', interviewStarted, 'completed:', interviewCompleted);
+    
+    const DETECTION_INTERVAL_MS = 350;
+
+    const detectionLoop = async () => {
+      const shouldDetect = interviewStarted && !interviewCompleted && faceDetectionModel &&
+        videoRef.current && !videoRef.current.paused;
+
+      if (!shouldDetect) {
+        detectionIntervalRef.current = setTimeout(detectionLoop, 1000);
+        return;
       }
-    }, 2000);
-    
-    console.log('✅ Real-time ML face detection started (checking every 2 seconds)');
-    console.log('✅ Detection interval ID:', detectionIntervalRef.current);
+
+      if (detectionInFlightRef.current) {
+        detectionIntervalRef.current = setTimeout(detectionLoop, DETECTION_INTERVAL_MS);
+        return;
+      }
+
+      detectionInFlightRef.current = true;
+      try {
+        await detectFacesWithML();
+      } finally {
+        detectionInFlightRef.current = false;
+        detectionIntervalRef.current = setTimeout(detectionLoop, DETECTION_INTERVAL_MS);
+      }
+    };
+
+    detectionLoop();
+    console.log('✅ Real-time ML face detection started');
   };
 
   const detectFacesWithML = async () => {
@@ -387,15 +588,19 @@ const AIInterview = () => {
     const canvas = canvasRef.current;
     
     // Check if video has valid dimensions
-    if (!video.videoWidth || !video.videoHeight) {
-      console.log('⚠️ Video dimensions not ready:', video.videoWidth, 'x', video.videoHeight);
+    if (!video.videoWidth || !video.videoHeight || video.videoWidth < 10 || video.videoHeight < 10) {
+      console.log('⚠️ Video dimensions not ready or invalid:', video.videoWidth, 'x', video.videoHeight);
       setFaceCount(0);
       return;
     }
     
     // Check if video is actually playing
-    if (video.paused || video.ended) {
-      console.warn('⚠️ Video is not playing - paused:', video.paused, 'ended:', video.ended);
+    if (video.paused || video.ended || video.readyState < 2) {
+      console.warn('⚠️ Video is not playing properly');
+      console.warn('   - Paused:', video.paused);
+      console.warn('   - Ended:', video.ended);
+      console.warn('   - Ready state:', video.readyState);
+      
       try {
         await video.play();
         console.log('✅ Video restarted');
@@ -406,41 +611,83 @@ const AIInterview = () => {
     }
 
     try {
+      if (!detectionCanvasRef.current) {
+        detectionCanvasRef.current = document.createElement('canvas');
+      }
+
+      const detectionCanvas = detectionCanvasRef.current;
+      const detectionWidth = 256;
+      const detectionHeight = Math.round(video.videoHeight * (detectionWidth / video.videoWidth));
+      detectionCanvas.width = detectionWidth;
+      detectionCanvas.height = detectionHeight;
+      const detectionContext = detectionCanvas.getContext('2d');
+      detectionContext.drawImage(video, 0, 0, detectionWidth, detectionHeight);
+
       // Detect faces using TensorFlow BlazeFace model
-      const predictions = await faceDetectionModel.estimateFaces(video, false);
+      const predictions = await faceDetectionModel.estimateFaces(detectionCanvas, false, false, false);
       
-      const detectedFaces = predictions.length;
-      setFaceCount(detectedFaces);
+      // Filter predictions by confidence threshold
+      const CONFIDENCE_THRESHOLD = 0.6;
+      const highConfidencePredictions = predictions.filter(pred => {
+        const confidence = pred.probability ? pred.probability[0] : 1;
+        return confidence >= CONFIDENCE_THRESHOLD;
+      });
+
+      const detectedFaces = highConfidencePredictions.length;
+      const recentCounts = recentFaceCountsRef.current;
+      recentCounts.push(detectedFaces);
+      if (recentCounts.length > 5) {
+        recentCounts.shift();
+      }
+
+      const countFrequency = recentCounts.reduce((acc, count) => {
+        acc[count] = (acc[count] || 0) + 1;
+        return acc;
+      }, {});
+      const stableFaceCount = Number(Object.keys(countFrequency).reduce((a, b) =>
+        countFrequency[a] >= countFrequency[b] ? a : b
+      ));
+
+      setFaceCount(stableFaceCount);
       
-      console.log(`📊 [ML] Face Detection - Faces: ${detectedFaces} at ${new Date().toLocaleTimeString()}`);
-      
-      // Optional: Draw bounding boxes on canvas for visualization
-      const context = canvas.getContext('2d');
+      // Set canvas dimensions to match video
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
+      
+      const context = canvas.getContext('2d');
       
       // Always clear and redraw to ensure fresh frame
       context.clearRect(0, 0, canvas.width, canvas.height);
       context.drawImage(video, 0, 0, canvas.width, canvas.height);
       
-      if (predictions.length > 0) {
-        predictions.forEach((prediction) => {
+      // Draw bounding boxes for high-confidence detections
+      if (highConfidencePredictions.length > 0) {
+        highConfidencePredictions.forEach((prediction) => {
           const start = prediction.topLeft;
           const end = prediction.bottomRight;
-          const size = [end[0] - start[0], end[1] - start[1]];
+          const scaleX = video.videoWidth / detectionWidth;
+          const scaleY = video.videoHeight / detectionHeight;
+          const scaledStart = [start[0] * scaleX, start[1] * scaleY];
+          const size = [(end[0] - start[0]) * scaleX, (end[1] - start[1]) * scaleY];
+          const confidence = prediction.probability ? prediction.probability[0] : 1;
+          
+          // Color based on face count: green for 1 face, red for multiple
+          const color = stableFaceCount === 1 ? '#00ff00' : '#ff0000';
           
           // Draw rectangle around detected face
-          context.strokeStyle = detectedFaces === 1 ? '#00ff00' : '#ff0000';
+          context.strokeStyle = color;
           context.lineWidth = 3;
-          context.strokeRect(start[0], start[1], size[0], size[1]);
+          context.strokeRect(scaledStart[0], scaledStart[1], size[0], size[1]);
           
-          // Draw confidence score
-          context.fillStyle = detectedFaces === 1 ? '#00ff00' : '#ff0000';
-          context.font = '16px Arial';
+          // Draw confidence score with background for better readability
+          context.fillStyle = 'rgba(0, 0, 0, 0.7)';
+          context.fillRect(scaledStart[0], scaledStart[1] - 25, 100, 20);
+          context.fillStyle = color;
+          context.font = 'bold 14px Arial';
           context.fillText(
-            `${Math.round(prediction.probability[0] * 100)}%`, 
-            start[0], 
-            start[1] - 5
+            `${Math.round(confidence * 100)}% Face`, 
+            scaledStart[0] + 5, 
+            scaledStart[1] - 10
           );
         });
       }
@@ -448,21 +695,25 @@ const AIInterview = () => {
       // Real-time violation detection and reporting
       if (interviewId && interviewStarted && !interviewCompleted) {
         try {
-          // Send webcam snapshot to backend
-          const snapshotData = canvas.toDataURL('image/jpeg', 0.6);
-          
-          api.post('/interview/update-webcam-snapshot', {
-            interviewId,
-            snapshot: snapshotData,
-            faceCount: detectedFaces
-          }).catch(err => {
-            console.log('Snapshot upload in progress or queued');
-          });
+          // Send webcam snapshot to backend (throttled)
+          const now = Date.now();
+          if (now - lastSnapshotAtRef.current > 3000) {
+            lastSnapshotAtRef.current = now;
+            const snapshotData = canvas.toDataURL('image/jpeg', 0.7);
+
+            api.post('/interview/update-webcam-snapshot', {
+              interviewId,
+              snapshot: snapshotData,
+              faceCount: stableFaceCount
+            }).catch(err => {
+              console.log('Snapshot upload queued or rate-limited');
+            });
+          }
 
           // Report face detection to backend
           api.post('/interview/report-face-detection', {
             interviewId,
-            facesDetected: detectedFaces
+            facesDetected: stableFaceCount
           }).then(response => {
             if (response.data?.analysis) {
               console.log('📊 Backend Analysis:', response.data.analysis);
@@ -472,7 +723,10 @@ const AIInterview = () => {
               console.warn('⚠️ Backend Warning:', response.data.warning);
               
               if (response.data.flagged) {
-                alert('🚨 ' + response.data.warning);
+                // Only alert once per violation type to avoid spam
+                if (lastViolationType !== (stableFaceCount === 0 ? 'NO_FACE' : 'MULTIPLE_FACES')) {
+                  alert('🚨 ' + response.data.warning);
+                }
               }
             }
           }).catch(err => {
@@ -480,11 +734,11 @@ const AIInterview = () => {
           });
 
           // Client-side warnings with enhanced violation tracking
-          if (detectedFaces !== 1) {
+          if (stableFaceCount !== 1) {
             let warningMessage = '';
             let violationType = null;
             
-            if (detectedFaces === 0) {
+            if (stableFaceCount === 0) {
               violationType = 'NO_FACE';
               warningMessage = `🚨 [${new Date().toLocaleTimeString()}] NO FACE DETECTED! Please ensure you are visible on camera.`;
               console.warn('🚨 VIOLATION: No face detected!');
@@ -501,17 +755,17 @@ const AIInterview = () => {
                 console.log('Warning sound error:', err.message);
               }
               
-              // Show visual alert for severe violations
-              if (noFaceCountRef.current >= 2) {
+              // Show visual alert for severe violations (every 3rd violation to avoid spam)
+              if (noFaceCountRef.current % 3 === 0) {
                 try {
                   showViolationAlert('NO FACE DETECTED', 'Please ensure your face is visible to the camera immediately!');
                 } catch (err) {
                   console.log('Alert error:', err.message);
                 }
               }
-            } else if (detectedFaces > 1) {
+            } else if (stableFaceCount > 1) {
               violationType = 'MULTIPLE_FACES';
-              warningMessage = `🚨 [${new Date().toLocaleTimeString()}] MULTIPLE FACES DETECTED (${detectedFaces})! Only the candidate should be visible.`;
+              warningMessage = `🚨 [${new Date().toLocaleTimeString()}] MULTIPLE FACES DETECTED (${stableFaceCount})! Only the candidate should be visible.`;
               console.warn('🚨 VIOLATION: Multiple faces detected!');
               
               // Track multiple face violations - CUMULATIVE (never decreases)
@@ -526,10 +780,10 @@ const AIInterview = () => {
                 console.log('Warning sound error:', err.message);
               }
               
-              // Show visual alert for severe violations
-              if (multipleFaceCountRef.current >= 2) {
+              // Show visual alert for severe violations (every 3rd violation to avoid spam)
+              if (multipleFaceCountRef.current % 3 === 0) {
                 try {
-                  showViolationAlert('MULTIPLE FACES DETECTED', `${detectedFaces} faces detected. Only you should be visible!`);
+                  showViolationAlert('MULTIPLE FACES DETECTED', `${stableFaceCount} faces detected. Only you should be visible!`);
                 } catch (err) {
                   console.log('Alert error:', err.message);
                 }
@@ -552,7 +806,6 @@ const AIInterview = () => {
               console.log(`🔒 COUNTERS PRESERVED (NEVER RESET) - No Face Total: ${noFaceCountRef.current}, Multiple Face Total: ${multipleFaceCountRef.current}`);
               setLastViolationType(null);
             }
-            console.log('✅ Face properly detected - monitoring continues - Counts remain: No Face=' + noFaceCountRef.current + ', Multiple=' + multipleFaceCountRef.current);
           }
         } catch (err) {
           console.error('❌ Face detection report error:', err);
@@ -561,6 +814,8 @@ const AIInterview = () => {
       }
     } catch (err) {
       console.error('❌ Face detection error:', err);
+      console.error('   - Error name:', err.name);
+      console.error('   - Error message:', err.message);
       setFaceCount(0);
       // Don't stop the detection loop - error might be temporary
       console.log('🔄 Face detection will retry on next interval');
@@ -1046,8 +1301,14 @@ const AIInterview = () => {
         return;
       }
       
+      // Check if interview was auto-completed due to time expiration
       if (interview.status === 'completed') {
-        alert('This interview has already been completed.');
+        if (interview.autoSubmitted) {
+          alert('⏰ This interview was automatically submitted due to time limit expiration.');
+        } else {
+          alert('This interview has already been completed.');
+        }
+        localStorage.removeItem('activeInterviewId');
         navigate('/candidate/dashboard');
         return;
       }
@@ -1061,6 +1322,22 @@ const AIInterview = () => {
         setQuestions(interview.questions || []);
         setInterviewStarted(true);
         setCurrentQuestionIndex(interview.currentQuestionIndex || 0);
+        
+        // Set time limit from interview data
+        const timeLimitMinutes = interview.timeLimit || 30;
+        setTimeLimit(timeLimitMinutes);
+        // Calculate remaining time (if interview has a start time, calculate elapsed time)
+        if (interview.startTime || interview.startedAt) {
+          const startTime = new Date(interview.startTime || interview.startedAt);
+          const elapsedMinutes = Math.floor((new Date() - startTime) / 1000 / 60);
+          const remainingMinutes = Math.max(0, timeLimitMinutes - elapsedMinutes);
+          setRemainingTime(remainingMinutes * 60); // Convert to seconds
+          console.log(`⏱️ Resume: ${timeLimitMinutes}min total, ${elapsedMinutes}min elapsed, ${remainingMinutes}min remaining`);
+        } else {
+          // No start time recorded, use full time limit
+          setRemainingTime(timeLimitMinutes * 60);
+          console.log(`⏱️ Resume: ${timeLimitMinutes}min time limit (full time)`);
+        }
         
         // 🆕 WAIT FOR MODEL TO LOAD BEFORE STARTING WEBCAM
         console.log('🔄 Resuming interview, waiting for model to load...');
@@ -1129,33 +1406,67 @@ const AIInterview = () => {
     try {
       setLoading(true);
       
-      // 🆕 WAIT FOR MODEL TO LOAD
+      // WAIT FOR MODEL TO LOAD (with automatic retry and fallback)
       console.log('⏳ Ensuring face detection model is loaded...');
       
       if (!faceDetectionModel) {
-        // Wait for model to load
-        await new Promise((resolve) => {
-          const checkInterval = setInterval(() => {
-            if (faceDetectionModel) {
-              clearInterval(checkInterval);
-              resolve();
+        console.log('⏳ Model not loaded yet, attempting to reload...');
+        setModelLoading(true);
+        
+        // Try loading the model with more attempts
+        let modelLoaded = false;
+        const maxAttempts = 5;
+        
+        for (let i = 0; i < maxAttempts && !modelLoaded; i++) {
+          try {
+            console.log(`🔄 Loading attempt ${i + 1}/${maxAttempts}...`);
+            await tf.ready();
+            const model = await blazeface.load({
+              maxFaces: 10,
+              iouThreshold: 0.3,
+              scoreThreshold: 0.75
+            });
+            setFaceDetectionModel(model);
+            modelLoaded = true;
+            console.log('✅ Model loaded successfully!');
+            setModelLoading(false);
+          } catch (loadError) {
+            console.warn(`⚠️ Load attempt ${i + 1} failed:`, loadError);
+            if (i < maxAttempts - 1) {
+              await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2s between attempts
             }
-          }, 100);
+          }
+        }
+        
+        if (!modelLoaded) {
+          setModelLoading(false);
+          console.warn('⚠️ Face detection model could not be loaded after multiple attempts');
           
-          // Timeout after 10 seconds
-          setTimeout(() => {
-            clearInterval(checkInterval);
-            console.warn('⚠️ Model loading timeout');
-            resolve();
-          }, 10000);
-        });
+          // Ask user if they want to proceed without face detection
+          const proceed = window.confirm(
+            '⚠️ Face detection model failed to load.\n\n' +
+            'This may be due to:\n' +
+            '• Slow internet connection\n' +
+            '• Browser compatibility issues\n' +
+            '• Firewall/network restrictions\n\n' +
+            'Do you want to proceed WITHOUT face detection?\n' +
+            '(Interview will continue but face monitoring may be limited)'
+          );
+          
+          if (!proceed) {
+            setLoading(false);
+            return;
+          }
+          
+          console.log('⚠️ Proceeding without face detection model');
+        }
+      } else {
+        console.log('✅ Model already loaded');
       }
       
-      console.log('✅ Model ready, starting webcam...');
+      console.log('✅ Model ready, preparing interview UI...');
       
-      // Start webcam first
-      await startWebcam();
-      
+      // Pre-fetch interview data FIRST (before starting webcam)
       const requestBody = isFromAcceptedApplication 
         ? { interviewId }  // Use the state variable, not URL param
         : { stream, difficulty };
@@ -1164,8 +1475,44 @@ const AIInterview = () => {
 
       setInterviewId(response.data.interviewId);
       setQuestions(response.data.questions);
+      
+      // Set time limit from response (in minutes) and convert to seconds for countdown
+      const timeLimitMinutes = response.data.timeLimit || 30;
+      const questionCount = response.data.questionCount || 5;
+      setTimeLimit(timeLimitMinutes);
+      setRemainingTime(timeLimitMinutes * 60); // Convert to seconds
+      
+      console.log(`⏱️ Interview timer set: ${timeLimitMinutes} minutes (${questionCount} questions)`);
+      
+      // Save interview ID to localStorage for page refresh recovery
+      localStorage.setItem('activeInterviewId', response.data.interviewId);
+      
+      // Set interview started to TRUE first, so video element gets rendered
       setInterviewStarted(true);
       setCurrentQuestionIndex(0);
+      
+      // Wait a bit for React to render the video element
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      // NOW start webcam with retry logic (after video element exists)
+      console.log('🎥 Starting webcam now that video element is rendered...');
+      try {
+        await startWebcam();
+        console.log('✅ Webcam started successfully'); 
+      } catch (webcamError) {
+        console.error('❌ Failed to start webcam:', webcamError);
+        setLoading(false);
+        // Don't proceed with interview if camera fails
+        alert('⚠️ Camera is required for proctoring.\n\nThe interview cannot start without working camera access.\n\nPlease:\n1. Grant camera permissions\n2. Ensure no other app is using your camera\n3. Try refreshing the page\n\nIf issues persist, contact support.');
+        // Reset interview state if webcam fails
+        setInterviewStarted(false);
+        return;
+      }
+      
+      // Verify webcam is actually active before proceeding
+      if (!webcamActive || !videoRef.current || !videoRef.current.srcObject) {
+        throw new Error('Webcam failed to activate properly');
+      }
       
       // Automatically read the first question
       if (response.data.questions.length > 0) {
@@ -1233,6 +1580,13 @@ const AIInterview = () => {
       }
 
     } catch (error) {
+      // Check if time expired
+      if (error.response?.data?.timeExpired) {
+        alert('⏰ Time limit exceeded! Your interview will be auto-submitted now.');
+        completeInterview();
+        return;
+      }
+      
       alert('❌ Error submitting answer: ' + (error.response?.data?.message || error.message));
     } finally {
       setLoading(false);
@@ -1428,6 +1782,9 @@ const previousQuestion = () => {
       stopListening();
       stopSpeaking();
       
+      // Clear active interview from localStorage
+      localStorage.removeItem('activeInterviewId');
+      
       const response = await api.post('/interview/complete', {
         interviewId
       });
@@ -1575,6 +1932,17 @@ const previousQuestion = () => {
               <span className="badge">Stream: {stream}</span>
               <span className="badge">Difficulty: {difficulty}</span>
               <span className="badge">Question {currentQuestionIndex + 1}/{questions.length}</span>
+              
+              {/* 🆕 TIMER DISPLAY */}
+              {remainingTime !== null && (
+                <span className={`badge ${
+                  remainingTime < 60 ? 'badge-danger' : 
+                  remainingTime < 300 ? 'badge-warning' : 
+                  'badge-info'
+                }`}>
+                  ⏱️ Time: {Math.floor(remainingTime / 60)}:{String(remainingTime % 60).padStart(2, '0')}
+                </span>
+              )}
               
               {/* 🆕 MODEL STATUS BADGE */}
               <span className={`badge ${faceDetectionModel ? 'badge-success' : 'badge-warning'}`}>

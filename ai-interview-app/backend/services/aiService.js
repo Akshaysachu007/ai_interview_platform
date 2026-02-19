@@ -4,6 +4,7 @@ import OpenAI from 'openai';
 import dotenv from 'dotenv';
 import questionGenerator from '../ml/questionGenerator.js';
 import difficultyPredictor from '../ml/difficultyPredictor.js';
+// import ResumeParserService from './resumeParserService.js'; // Removed - using simple Python parser instead
 
 dotenv.config();
 
@@ -669,6 +670,831 @@ Respond with a JSON object:
     } else {
       return this.generateFallbackQuestions(stream, difficulty, count);
     }
+  }
+
+  // =====================================================================
+  // ADVANCED HR TECH INTEGRATION ENGINE
+  // Role: Manage the lifecycle of job applications by processing resumes,
+  //       managing notifications, and scoring candidates against job descriptions
+  // =====================================================================
+
+  /**
+   * Task 1: Data Extraction & Profile Building
+   * Parse resume to extract personal details, professional data, and skills
+   * @param {String} resumeText - Raw text extracted from resume
+   * @returns {Object} Structured candidate profile data
+   */
+  static async parseResumeAndBuildProfile(resumeText) {
+    console.log(`\n${'='.repeat(60)}`);
+    console.log('📋 TASK 1: DATA EXTRACTION & PROFILE BUILDING');
+    console.log(`${'='.repeat(60)}\n`);
+
+    const systemPrompt = `Role: You are an Advanced HR Tech Integration Engine. Your goal is to manage the lifecycle of a job application by processing resumes, managing notifications, and scoring candidates against job descriptions (JD).
+
+Task: Data Extraction & Profile Building
+When a candidate uploads a resume, parse the document to:
+1. Extract Personal Details: Full Name, Email, Phone Number, LinkedIn URL, and Location.
+2. Extract Professional Data: Work Experience (Company, Role, Duration), Education, and Certifications.
+3. Identify Skills: Categorize into Hard Skills (Technical) and Soft Skills.
+
+Output Format: Return a structured JSON object to populate the candidate's profile. Use this exact schema:
+{
+  "personalDetails": {
+    "fullName": "string",
+    "email": "string",
+    "phone": "string",
+    "linkedinUrl": "string",
+    "location": "string"
+  },
+  "workExperience": [
+    {
+      "company": "string",
+      "role": "string",
+      "duration": "string",
+      "description": "string"
+    }
+  ],
+  "education": [
+    {
+      "institution": "string",
+      "degree": "string",
+      "field": "string",
+      "year": "string"
+    }
+  ],
+  "certifications": ["string"],
+  "skills": {
+    "hardSkills": ["string"],
+    "softSkills": ["string"]
+  }
+}
+
+Be thorough and extract all available information. If information is not found, use null or empty arrays.`;
+
+    try {
+      const response = await openai.chat.completions.create({
+        model: 'gpt-4o',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: `Parse this resume and extract all information:\n\n${resumeText}` }
+        ],
+        temperature: 0.3,
+        response_format: { type: 'json_object' }
+      });
+
+      const extractedData = JSON.parse(response.choices[0].message.content);
+      
+      console.log('✅ Successfully extracted candidate profile data');
+      console.log(`   Name: ${extractedData.personalDetails?.fullName}`);
+      console.log(`   Hard Skills: ${extractedData.skills?.hardSkills?.length || 0}`);
+      console.log(`   Soft Skills: ${extractedData.skills?.softSkills?.length || 0}`);
+      console.log(`   Experience: ${extractedData.workExperience?.length || 0} positions`);
+      console.log(`${'='.repeat(60)}\n`);
+
+      return {
+        success: true,
+        data: extractedData
+      };
+
+    } catch (error) {
+      console.error('❌ Error parsing resume:', error.message);
+      
+      // Fallback: return error since we're using simple Python parser now
+      console.log('⚠️ Resume parsing failed - use /resume/parse endpoint with simple parser\n');
+      
+      return {
+        success: false,
+        error: error.message,
+        hint: 'Use the /api/candidates/resume/parse endpoint with simple Python-based extraction'
+      };
+    }
+  }
+
+  /**
+   * Basic fallback extraction when OpenAI is unavailable
+   */
+  static basicResumeExtraction(resumeText) {
+    const emailRegex = /[\w.-]+@[\w.-]+\.\w+/g;
+    const phoneRegex = /[\+]?[(]?[0-9]{3}[)]?[-\s\.]?[0-9]{3}[-\s\.]?[0-9]{4,6}/g;
+    const linkedinRegex = /linkedin\.com\/in\/[\w-]+/gi;
+
+    const emails = resumeText.match(emailRegex) || [];
+    const phones = resumeText.match(phoneRegex) || [];
+    const linkedin = resumeText.match(linkedinRegex) || [];
+
+    // Extract skills (common technical keywords)
+    const techSkills = ['JavaScript', 'Python', 'Java', 'React', 'Node.js', 'AWS', 'Docker', 'SQL', 
+                        'MongoDB', 'Git', 'TypeScript', 'CSS', 'HTML', 'REST', 'API'];
+    const foundSkills = techSkills.filter(skill => 
+      resumeText.toLowerCase().includes(skill.toLowerCase())
+    );
+
+    return {
+      personalDetails: {
+        fullName: null,
+        email: emails[0] || null,
+        phone: phones[0] || null,
+        linkedinUrl: linkedin[0] || null,
+        location: null
+      },
+      workExperience: [],
+      education: [],
+      certifications: [],
+      skills: {
+        hardSkills: foundSkills,
+        softSkills: []
+      }
+    };
+  }
+
+  /**
+   * Task 2: Smart Notification Logic
+   * Compare candidate skills with job requirements and calculate match percentage
+   * @param {Array} candidateSkills - Array of candidate's skills
+   * @param {Array} requiredSkills - Array of job required skills
+   * @returns {Object} Match analysis with percentage and recommendation
+   */
+  static calculateSkillMatch(candidateSkills, requiredSkills) {
+    console.log(`\n${'='.repeat(60)}`);
+    console.log('🎯 TASK 2: SMART NOTIFICATION LOGIC');
+    console.log(`${'='.repeat(60)}\n`);
+
+    if (!requiredSkills || requiredSkills.length === 0) {
+      return { matchPercentage: 0, shouldNotify: false, matchedSkills: [], missingSkills: [] };
+    }
+
+    // Normalize skills to lowercase for comparison
+    const candidateSkillsLower = (candidateSkills || []).map(s => s.toLowerCase().trim());
+    const requiredSkillsLower = requiredSkills.map(s => s.toLowerCase().trim());
+
+    // Find matched skills
+    const matchedSkills = requiredSkillsLower.filter(skill => 
+      candidateSkillsLower.some(cSkill => 
+        cSkill.includes(skill) || skill.includes(cSkill)
+      )
+    );
+
+    // Find missing skills
+    const missingSkills = requiredSkillsLower.filter(skill => 
+      !matchedSkills.includes(skill)
+    );
+
+    // Calculate match percentage
+    const matchPercentage = (matchedSkills.length / requiredSkillsLower.length) * 100;
+
+    // Threshold for notification is 60%
+    const shouldNotify = matchPercentage >= 60;
+
+    console.log(`   Match Percentage: ${matchPercentage.toFixed(1)}%`);
+    console.log(`   Matched Skills: ${matchedSkills.length}/${requiredSkillsLower.length}`);
+    console.log(`   Should Notify: ${shouldNotify ? '✅ YES' : '❌ NO'}`);
+    console.log(`${'='.repeat(60)}\n`);
+
+    return {
+      matchPercentage: Math.round(matchPercentage),
+      shouldNotify,
+      matchedSkills,
+      missingSkills,
+      totalRequired: requiredSkillsLower.length,
+      totalMatched: matchedSkills.length
+    };
+  }
+
+  /**
+   * Task 3: Validation & Resume Scoring
+   * Score candidate's resume against specific job description
+   * @param {Object} candidateProfile - Extracted candidate profile
+   * @param {Object} jobDescription - Job requirements and description
+   * @returns {Object} Score and gap analysis
+   */
+  static async scoreResumeAgainstJD(candidateProfile, jobDescription) {
+    console.log(`\n${'='.repeat(60)}`);
+    console.log('📊 TASK 3: VALIDATION & RESUME SCORING');
+    console.log(`${'='.repeat(60)}\n`);
+
+    const systemPrompt = `Role: You are an Advanced HR Tech Integration Engine specialized in resume validation and scoring.
+
+Task: Validation & Resume Scoring
+Compare the Candidate's Resume against the specific Job Description (JD) provided by the recruiter.
+
+Scoring Criteria:
+1. Keyword Match (40 points): Presence of essential tools and technologies
+2. Experience Relevance (30 points): Years of experience in similar roles
+3. Educational Alignment (20 points): Degree requirements
+4. Overall Fit (10 points): Cultural and soft skills alignment
+
+Output Format: Return a JSON object with this schema:
+{
+  "overallScore": 85,
+  "breakdown": {
+    "keywordMatch": 38,
+    "experienceRelevance": 25,
+    "educationalAlignment": 15,
+    "overallFit": 7
+  },
+  "gapAnalysis": [
+    "Missing experience in AWS cloud services",
+    "Recommendation: Obtain AWS certification",
+    "Strong match in React and Node.js"
+  ],
+  "strengths": ["string"],
+  "weaknesses": ["string"],
+  "recommendation": "Highly Recommended | Recommended | Consider | Not Recommended"
+}
+
+Be objective and provide actionable feedback.`;
+
+    try {
+      const prompt = `
+Candidate Profile:
+${JSON.stringify(candidateProfile, null, 2)}
+
+Job Description:
+${JSON.stringify(jobDescription, null, 2)}
+
+Score this candidate against the job requirements and provide detailed gap analysis.`;
+
+      const response = await openai.chat.completions.create({
+        model: 'gpt-4o',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: prompt }
+        ],
+        temperature: 0.3,
+        response_format: { type: 'json_object' }
+      });
+
+      const scoringResult = JSON.parse(response.choices[0].message.content);
+      
+      console.log(`✅ Resume Scoring Complete`);
+      console.log(`   Overall Score: ${scoringResult.overallScore}/100`);
+      console.log(`   Recommendation: ${scoringResult.recommendation}`);
+      console.log(`   Gap Analysis Points: ${scoringResult.gapAnalysis?.length || 0}`);
+      console.log(`${'='.repeat(60)}\n`);
+
+      return {
+        success: true,
+        ...scoringResult
+      };
+
+    } catch (error) {
+      console.error('❌ Error scoring resume:', error.message);
+      
+      // Fallback scoring
+      return this.basicResumeScoring(candidateProfile, jobDescription);
+    }
+  }
+
+  /**
+   * Basic fallback scoring when OpenAI is unavailable
+   */
+  static basicResumeScoring(candidateProfile, jobDescription) {
+    const candidateSkills = [
+      ...(candidateProfile.skills?.hardSkills || []),
+      ...(candidateProfile.skills?.softSkills || [])
+    ];
+
+    const requiredSkills = jobDescription.requiredSkills || [];
+    const matchResult = this.calculateSkillMatch(candidateSkills, requiredSkills);
+
+    // Simple scoring based on skill match
+    const keywordScore = Math.round((matchResult.matchPercentage / 100) * 40);
+    const experienceScore = candidateProfile.workExperience?.length >= 2 ? 20 : 10;
+    const educationScore = candidateProfile.education?.length > 0 ? 15 : 5;
+    const overallScore = keywordScore + experienceScore + educationScore + 5;
+
+    const gapAnalysis = matchResult.missingSkills.map(skill => 
+      `You are missing experience in ${skill}`
+    );
+
+    return {
+      success: true,
+      overallScore: Math.min(100, overallScore),
+      breakdown: {
+        keywordMatch: keywordScore,
+        experienceRelevance: experienceScore,
+        educationalAlignment: educationScore,
+        overallFit: 5
+      },
+      gapAnalysis,
+      strengths: matchResult.matchedSkills.map(s => `Strong in ${s}`),
+      weaknesses: matchResult.missingSkills.slice(0, 5),
+      recommendation: overallScore >= 70 ? 'Recommended' : 
+                      overallScore >= 50 ? 'Consider' : 'Not Recommended'
+    };
+  }
+
+  /**
+   * Enhanced notification generator that includes skill match information
+   * @param {Object} interview - Interview/Job posting
+   * @param {Object} candidate - Candidate profile
+   * @returns {Object} Notification message with match details
+   */
+  static generateSmartNotification(interview, candidate) {
+    const candidateSkills = candidate.skills || [];
+    const requiredSkills = interview.requiredSkills || [];
+    
+    const matchResult = this.calculateSkillMatch(candidateSkills, requiredSkills);
+
+    if (!matchResult.shouldNotify) {
+      return null; // Don't generate notification if below threshold
+    }
+
+    return {
+      title: `🎯 ${matchResult.matchPercentage}% Match - ${interview.title || interview.stream}`,
+      message: `An interview application is available that matches your skill set: ${interview.title || interview.stream} at ${interview.company || 'Company'}. You match ${matchResult.totalMatched}/${matchResult.totalRequired} required skills.`,
+      matchPercentage: matchResult.matchPercentage,
+      matchedSkills: matchResult.matchedSkills,
+      missingSkills: matchResult.missingSkills,
+      shouldApply: true
+    };
+  }
+
+  /**
+   * =====================================================================
+   * ENHANCED AI EVALUATION ENGINE
+   * Analyzes interview performance with timing, tone, and quality metrics
+   * =====================================================================
+   */
+  
+  /**
+   * Enhanced Interview Evaluation with Timing & Tone Analysis
+   * @param {Object} interviewData - Complete interview data
+   * @returns {Object} Comprehensive evaluation with recommendations
+   */
+  static async evaluateInterviewComprehensive(interviewData) {
+    console.log(`\n${'='.repeat(80)}`);
+    console.log('🎯 ENHANCED AI EVALUATION ENGINE - START');
+    console.log(`${'='.repeat(80)}\n`);
+
+    const { questions, malpractices, duration, jobDescription, stream, difficulty } = interviewData;
+    
+    // Step 1: Analyze Timing Metrics
+    console.log('⏱️  STEP 1: Analyzing Timing & Response Speed...');
+    const timingAnalysis = this.analyzeTimingMetrics(questions);
+    console.log(`   Average Answer Time: ${timingAnalysis.averageAnswerTime}s`);
+    console.log(`   Response Consistency: ${timingAnalysis.responseConsistency}`);
+    console.log(`   Pace Analysis: ${timingAnalysis.paceAnalysis}\n`);
+
+    // Step 2: Analyze Answer Quality
+    console.log('📊 STEP 2: Analyzing Answer Quality...');
+    const qualityAnalysis = await this.analyzeAnswerQuality(questions, jobDescription, stream, difficulty);
+    console.log(`   Overall Quality Score: ${qualityAnalysis.overallQualityScore}/100`);
+    console.log(`   Technical Accuracy: ${qualityAnalysis.technicalAccuracyScore}/100`);
+    console.log(`   Relevance Score: ${qualityAnalysis.relevanceScore}/100\n`);
+
+    // Step 3: Analyze Tone & Communication
+    console.log('🎤 STEP 3: Analyzing Tone & Communication...');
+    const toneAnalysis = await this.analyzeToneAndCommunication(questions);
+    console.log(`   Professionalism: ${toneAnalysis.professionalism}/100`);
+    console.log(`   Confidence: ${toneAnalysis.confidence}/100`);
+    console.log(`   Overall Tone: ${toneAnalysis.overallTone}\n`);
+
+    // Step 4: Calculate Comprehensive Score
+    console.log('🎯 STEP 4: Calculating Comprehensive Score...');
+    const comprehensiveScore = this.calculateEnhancedScore({
+      timingAnalysis,
+      qualityAnalysis,
+      toneAnalysis,
+      malpractices
+    });
+    console.log(`   Final Score: ${comprehensiveScore.finalScore}/100`);
+    console.log(`   Recommendation: ${comprehensiveScore.recommendation}\n`);
+
+    // Step 5: Generate Detailed Feedback
+    console.log('💡 STEP 5: Generating Detailed Feedback...');
+    const feedback = this.generateDetailedFeedback({
+      timingAnalysis,
+      qualityAnalysis,
+      toneAnalysis,
+      comprehensiveScore,
+      malpractices
+    });
+    console.log(`   Pros: ${feedback.pros.length}`);
+    console.log(`   Cons: ${feedback.cons.length}`);
+    console.log(`   Improvement Suggestions: ${feedback.improvementSuggestions.length}\n`);
+
+    console.log(`${'='.repeat(80)}`);
+    console.log('✅ ENHANCED AI EVALUATION COMPLETE');
+    console.log(`${'='.repeat(80)}\n`);
+
+    return {
+      enhancedEvaluation: {
+        ...timingAnalysis,
+        toneAnalysis,
+        answerDepthScore: qualityAnalysis.depthScore,
+        technicalAccuracyScore: qualityAnalysis.technicalAccuracyScore,
+        relevanceScore: qualityAnalysis.relevanceScore,
+        completenessScore: qualityAnalysis.completenessScore,
+        overallQualityScore: qualityAnalysis.overallQualityScore,
+        comparedToAverage: comprehensiveScore.comparedToAverage,
+        percentileRank: comprehensiveScore.percentileRank,
+        detailedFeedback: feedback.detailedFeedback,
+        improvementSuggestions: feedback.improvementSuggestions,
+        evaluatedAt: new Date()
+      },
+      score: comprehensiveScore.finalScore,
+      recommendation: comprehensiveScore.recommendation,
+      pros: feedback.pros,
+      cons: feedback.cons,
+      overallAssessment: feedback.overallAssessment,
+      aiConfidenceLevel: comprehensiveScore.confidenceLevel
+    };
+  }
+
+  /**
+   * Analyze timing metrics for all answers
+   */
+  static analyzeTimingMetrics(questions) {
+    const answeredQuestions = questions.filter(q => q.answer && q.answerDuration);
+    
+    if (answeredQuestions.length === 0) {
+      return {
+        averageAnswerTime: 0,
+        totalThinkingTime: 0,
+        responseConsistency: 'No Data',
+        paceAnalysis: 'No Data'
+      };
+    }
+
+    const durations = answeredQuestions.map(q => q.answerDuration);
+    const averageAnswerTime = Math.round(durations.reduce((a, b) => a + b, 0) / durations.length);
+    const totalThinkingTime = durations.reduce((a, b) => a + b, 0);
+
+    // Calculate standard deviation for consistency
+    const variance = durations.reduce((sum, dur) => sum + Math.pow(dur - averageAnswerTime, 2), 0) / durations.length;
+    const stdDev = Math.sqrt(variance);
+    const coefficientOfVariation = (stdDev / averageAnswerTime) * 100;
+
+    let responseConsistency;
+    if (coefficientOfVariation < 25) responseConsistency = 'Consistent';
+    else if (coefficientOfVariation < 50) responseConsistency = 'Variable';
+    else responseConsistency = 'Inconsistent';
+
+    // Analyze pace
+    let paceAnalysis;
+    if (averageAnswerTime < 30) paceAnalysis = 'Rushed';
+    else if (averageAnswerTime < 90) paceAnalysis = 'Well-paced';
+    else paceAnalysis = 'Slow';
+
+    return {
+      averageAnswerTime,
+      totalThinkingTime,
+      responseConsistency,
+      paceAnalysis
+    };
+  }
+
+  /**
+   * Analyze answer quality using AI
+   */
+  static async analyzeAnswerQuality(questions, jobDescription, stream, difficulty) {
+    const answeredQuestions = questions.filter(q => q.answer);
+    
+    if (answeredQuestions.length === 0) {
+      return {
+        overallQualityScore: 0,
+        technicalAccuracyScore: 0,
+        relevanceScore: 0,
+        completenessScore: 0,
+        depthScore: 0
+      };
+    }
+
+    // Check if OpenAI API is available
+    if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY === 'your_openai_api_key_here') {
+      console.warn('⚠️ OpenAI API not configured. Using heuristic evaluation.');
+      return this.analyzeAnswerQualityHeuristic(answeredQuestions);
+    }
+
+    try {
+      const prompt = `Evaluate the quality of these interview answers for a ${stream} position at ${difficulty} level.
+
+Job Context: ${jobDescription || 'General technical interview'}
+
+Questions and Answers:
+${answeredQuestions.map((q, i) => `
+Q${i + 1}: ${q.question}
+A${i + 1}: ${q.answer}
+`).join('\n')}
+
+Analyze and score each aspect (0-100):
+1. Technical Accuracy: Are the answers technically correct?
+2. Relevance: Do answers address the questions asked?
+3. Completeness: Are answers thorough and complete?
+4. Depth: Do answers show deep understanding?
+5. Overall Quality: Overall assessment of answer quality
+
+Respond in JSON format:
+{
+  "technicalAccuracyScore": 0-100,
+  "relevanceScore": 0-100,
+  "completenessScore": 0-100,
+  "depthScore": 0-100,
+  "overallQualityScore": 0-100,
+  "reasoning": "Brief explanation"
+}`;
+
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: "You are an expert technical interviewer. Evaluate answer quality objectively. Return only valid JSON."
+          },
+          { role: "user", content: prompt }
+        ],
+        temperature: 0.3,
+        max_tokens: 500,
+        response_format: { type: "json_object" }
+      });
+
+      const result = JSON.parse(completion.choices[0].message.content);
+      return result;
+    } catch (error) {
+      console.error('❌ AI Quality Analysis Error:', error.message);
+      return this.analyzeAnswerQualityHeuristic(answeredQuestions);
+    }
+  }
+
+  /**
+   * Heuristic-based quality analysis (fallback)
+   */
+  static analyzeAnswerQualityHeuristic(questions) {
+    const scores = questions.map(q => {
+      const wordCount = q.answer.split(/\s+/).length;
+      const charCount = q.answer.length;
+      
+      // Score based on answer length and structure
+      let score = 0;
+      if (wordCount >= 50 && wordCount <= 300) score += 40;
+      else if (wordCount >= 30) score += 25;
+      else if (wordCount >= 15) score += 15;
+      
+      // Check for technical terms
+      if (/\b(algorithm|system|design|implement|optimize|structure|process|function)\b/i.test(q.answer)) {
+        score += 20;
+      }
+      
+      // Check for examples
+      if (/\b(example|instance|such as|for example|like)\b/i.test(q.answer)) {
+        score += 15;
+      }
+      
+      // Check for explanation markers
+      if (/\b(because|therefore|thus|since|as a result)\b/i.test(q.answer)) {
+        score += 15;
+      }
+      
+      // Penalize very short or very long answers
+      if (wordCount < 10) score -= 20;
+      if (wordCount > 500) score -= 10;
+      
+      return Math.min(100, Math.max(0, score));
+    });
+
+    const avgScore = Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
+
+    return {
+      technicalAccuracyScore: avgScore,
+      relevanceScore: avgScore,
+      completenessScore: avgScore - 5,
+      depthScore: avgScore - 10,
+      overallQualityScore: avgScore
+    };
+  }
+
+  /**
+   * Analyze tone and communication style
+   */
+  static async analyzeToneAndCommunication(questions) {
+    const answeredQuestions = questions.filter(q => q.answer);
+    
+    if (answeredQuestions.length === 0) {
+      return {
+        professionalism: 0,
+        confidence: 0,
+        clarity: 0,
+        articulation: 0,
+        overallTone: 'No Data'
+      };
+    }
+
+    // Heuristic analysis (can be enhanced with AI)
+    const allAnswers = answeredQuestions.map(q => q.answer).join(' ');
+    
+    // Professionalism: Check for professional language
+    let professionalism = 70;
+    if (/\b(um|uh|like|basically|kinda|sorta|yeah)\b/gi.test(allAnswers)) {
+      professionalism -= 15;
+    }
+    if (/\b(please|thank you|certainly|indeed|furthermore)\b/gi.test(allAnswers)) {
+      professionalism += 15;
+    }
+
+    // Confidence: Check for confident language
+    let confidence = 65;
+    if (/\b(I think|maybe|perhaps|probably|might|could be)\b/gi.test(allAnswers)) {
+      confidence -= 10;
+    }
+    if (/\b(definitely|certainly|clearly|obviously|absolutely)\b/gi.test(allAnswers)) {
+      confidence += 20;
+    }
+
+    // Clarity: Check sentence structure
+    const avgSentenceLength = allAnswers.split(/[.!?]/).length / answeredQuestions.length;
+    let clarity = 70;
+    if (avgSentenceLength > 5 && avgSentenceLength < 15) clarity += 20;
+    if (avgSentenceLength > 20) clarity -= 15;
+
+    // Articulation: Check vocabulary diversity
+    const words = allAnswers.toLowerCase().split(/\s+/);
+    const uniqueWords = new Set(words);
+    const vocabularyRichness = (uniqueWords.size / words.length) * 100;
+    let articulation = Math.min(90, Math.round(vocabularyRichness * 2));
+
+    // Overall tone
+    const avgTone = (professionalism + confidence + clarity + articulation) / 4;
+    let overallTone;
+    if (avgTone >= 80) overallTone = 'Excellent';
+    else if (avgTone >= 65) overallTone = 'Good';
+    else if (avgTone >= 50) overallTone = 'Average';
+    else overallTone = 'Poor';
+
+    return {
+      professionalism: Math.min(100, Math.max(0, professionalism)),
+      confidence: Math.min(100, Math.max(0, confidence)),
+      clarity: Math.min(100, Math.max(0, clarity)),
+      articulation: Math.min(100, Math.max(0, articulation)),
+      overallTone
+    };
+  }
+
+  /**
+   * Calculate enhanced comprehensive score
+   */
+  static calculateEnhancedScore({ timingAnalysis, qualityAnalysis, toneAnalysis, malpractices }) {
+    // Base score from quality (50%)
+    let finalScore = qualityAnalysis.overallQualityScore * 0.5;
+
+    // Tone contribution (20%)
+    const avgTone = (toneAnalysis.professionalism + toneAnalysis.confidence + 
+                     toneAnalysis.clarity + toneAnalysis.articulation) / 4;
+    finalScore += avgTone * 0.2;
+
+    // Timing contribution (10%)
+    let timingScore = 70;
+    if (timingAnalysis.paceAnalysis === 'Well-paced') timingScore = 90;
+    else if (timingAnalysis.paceAnalysis === 'Rushed') timingScore = 60;
+    else timingScore = 70;
+    
+    if (timingAnalysis.responseConsistency === 'Consistent') timingScore += 10;
+    finalScore += Math.min(100, timingScore) * 0.1;
+
+    // Integrity (20%) - deduct for malpractices
+    let integrityScore = 100;
+    const deductions = {
+      'tab_switch': 5,
+      'multiple_voice': 15,
+      'ai_generated_answer': 20,
+      'face_not_detected': 10,
+      'multiple_faces': 15
+    };
+
+    malpractices.forEach(m => {
+      const deduction = deductions[m.type] || 10;
+      if (m.severity === 'high') integrityScore -= deduction * 1.5;
+      else if (m.severity === 'medium') integrityScore -= deduction;
+      else integrityScore -= deduction * 0.5;
+    });
+    integrityScore = Math.max(0, integrityScore);
+    finalScore += integrityScore * 0.2;
+
+    finalScore = Math.round(Math.min(100, Math.max(0, finalScore)));
+
+    // Determine recommendation
+    let recommendation;
+    if (finalScore >= 85 && integrityScore >= 90) recommendation = 'Strong Hire';
+    else if (finalScore >= 70 && integrityScore >= 80) recommendation = 'Hire';
+    else if (finalScore >= 55) recommendation = 'Maybe';
+    else recommendation = 'No Hire';
+
+    // Determine compared to average (simplified)
+    let comparedToAverage;
+    if (finalScore >= 75) comparedToAverage = 'Above Average';
+    else if (finalScore >= 55) comparedToAverage = 'Average';
+    else comparedToAverage = 'Below Average';
+
+    // Calculate percentile (simplified estimation)
+    const percentileRank = Math.min(99, Math.round(finalScore * 0.9));
+
+    return {
+      finalScore,
+      recommendation,
+      comparedToAverage,
+      percentileRank,
+      confidenceLevel: Math.round((finalScore / 100) * 85 + 15) // 15-100
+    };
+  }
+
+  /**
+   * Generate detailed feedback
+   */
+  static generateDetailedFeedback({ timingAnalysis, qualityAnalysis, toneAnalysis, comprehensiveScore, malpractices }) {
+    const pros = [];
+    const cons = [];
+    const improvementSuggestions = [];
+    const feedbackItems = [];
+
+    // Analyze strengths
+    if (qualityAnalysis.overallQualityScore >= 80) {
+      pros.push('Demonstrated strong technical knowledge with comprehensive answers');
+      feedbackItems.push('Excellent answer quality showing deep understanding of concepts');
+    }
+    
+    if (toneAnalysis.professionalism >= 80) {
+      pros.push('Maintained professional communication throughout the interview');
+      feedbackItems.push('Professional tone and language usage');
+    }
+    
+    if (timingAnalysis.paceAnalysis === 'Well-paced') {
+      pros.push('Well-paced responses showing thoughtful consideration');
+      feedbackItems.push('Good time management with appropriate response lengths');
+    }
+    
+    if (malpractices.length === 0) {
+      pros.push('Perfect integrity with no violations detected');
+      feedbackItems.push('Maintained complete focus and integrity throughout');
+    }
+
+    // Ensure exactly 3 pros
+    if (pros.length < 3) {
+      if (toneAnalysis.confidence >= 70) {
+        pros.push('Displayed confidence in technical knowledge and explanations');
+      }
+      if (timingAnalysis.responseConsistency === 'Consistent') {
+        pros.push('Consistent response pattern showing reliable performance');
+      }
+      if (qualityAnalysis.technicalAccuracyScore >= 70) {
+        pros.push('Technically accurate answers demonstrating solid foundation');
+      }
+    }
+
+    // Analyze weaknesses
+    if (qualityAnalysis.completenessScore < 60) {
+      cons.push('Some answers lacked completeness and could be more detailed');
+      improvementSuggestions.push('Provide more comprehensive answers with examples and explanations');
+    }
+    
+    if (timingAnalysis.paceAnalysis === 'Rushed') {
+      cons.push('Responses appeared rushed, may benefit from more thoughtful consideration');
+      improvementSuggestions.push('Take more time to think through answers before responding');
+    } else if (timingAnalysis.paceAnalysis === 'Slow') {
+      cons.push('Response time was slower than average, affecting overall pace');
+      improvementSuggestions.push('Work on time management to provide timely responses');
+    }
+    
+    if (toneAnalysis.clarity < 65) {
+      cons.push('Communication clarity could be improved for better understanding');
+      improvementSuggestions.push('Structure answers more clearly with logical flow');
+    }
+    
+    if (malpractices.length > 0) {
+      cons.push(`Interview integrity affected by ${malpractices.length} violation(s)`);
+      improvementSuggestions.push('Maintain focus on the interview window to avoid integrity issues');
+    }
+
+    // Ensure exactly 2 cons
+    if (cons.length < 2) {
+      if (qualityAnalysis.depthScore < 70) {
+        cons.push('Answer depth could be enhanced with more detailed explanations');
+      }
+      if (toneAnalysis.confidence < 65) {
+        cons.push('Could demonstrate more confidence in responses');
+      }
+    }
+
+    // Limit to exactly 3 pros and 2 cons
+    const finalPros = pros.slice(0, 3);
+    const finalCons = cons.slice(0, 2);
+
+    // Overall assessment
+    const overallAssessment = `Candidate scored ${comprehensiveScore.finalScore}/100 overall. ` +
+      `Performance was ${comprehensiveScore.comparedToAverage.toLowerCase()} ` +
+      `(${comprehensiveScore.percentileRank}th percentile). ` +
+      `${comprehensiveScore.recommendation === 'Strong Hire' || comprehensiveScore.recommendation === 'Hire' 
+        ? 'Shows strong potential and recommended for hiring consideration.' 
+        : comprehensiveScore.recommendation === 'Maybe' 
+        ? 'Shows potential but has areas needing improvement.' 
+        : 'Significant improvement needed to meet hiring standards.'}`;
+
+    return {
+      pros: finalPros,
+      cons: finalCons,
+      improvementSuggestions: improvementSuggestions.slice(0, 5),
+      detailedFeedback: feedbackItems,
+      overallAssessment
+    };
   }
 }
 

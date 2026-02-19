@@ -1,19 +1,22 @@
 // Notification Service - Handles creating and sending notifications
 import Notification from '../models/Notification.js';
 import Candidate from '../models/Candidate.js';
+import AIService from './aiService.js';
 
 class NotificationService {
   /**
    * Send notification to candidates when new interview is created
+   * ENHANCED: Now includes smart skill matching (60% threshold)
    * @param {Object} interview - Interview document
    * @param {Object} recruiter - Recruiter document
    */
   static async notifyNewInterview(interview, recruiter) {
     try {
       console.log(`\n${'='.repeat(60)}`);
-      console.log(`📢 SENDING NOTIFICATIONS FOR NEW INTERVIEW`);
+      console.log(`📢 SENDING SMART NOTIFICATIONS FOR NEW INTERVIEW`);
       console.log(`   Stream: ${interview.stream}`);
       console.log(`   Difficulty: ${interview.difficulty}`);
+      console.log(`   Required Skills: ${interview.requiredSkills?.length || 0}`);
       console.log(`${'='.repeat(60)}\n`);
 
       // Find all candidates who:
@@ -22,7 +25,7 @@ class NotificationService {
       const candidates = await Candidate.find({
         stream: interview.stream,
         notificationsEnabled: true
-      }).select('_id name email stream');
+      }).select('_id name email stream skills extractedSkills');
 
       console.log(`✅ Found ${candidates.length} candidates with stream: ${interview.stream}`);
 
@@ -31,34 +34,108 @@ class NotificationService {
         return { success: true, notificationsSent: 0 };
       }
 
-      // Create notification for each candidate
-      const notifications = candidates.map(candidate => ({
-        recipientId: candidate._id,
-        type: 'new_interview',
-        title: `New ${interview.stream} Interview Available!`,
-        message: `A new ${interview.difficulty} level interview for ${interview.stream} has been posted by ${recruiter.company || recruiter.name}. Apply now!`,
-        interviewId: interview._id,
-        recruiterId: interview.recruiterId,
-        stream: interview.stream,
-        metadata: {
-          difficulty: interview.difficulty,
-          recruiterName: recruiter.name,
-          recruiterCompany: recruiter.company,
-          interviewStatus: interview.applicationStatus
+      // TASK 2: Smart Notification Logic - Only notify if 60%+ skill match
+      const notifications = [];
+      let matchedCount = 0;
+      let skippedCount = 0;
+
+      for (const candidate of candidates) {
+        // Combine all candidate skills
+        const candidateSkills = [
+          ...(candidate.skills || []),
+          ...(candidate.extractedSkills?.hardSkills || []),
+          ...(candidate.extractedSkills?.softSkills || [])
+        ];
+
+        // Check if interview has required skills for matching
+        if (interview.requiredSkills && interview.requiredSkills.length > 0) {
+          const matchResult = AIService.calculateSkillMatch(
+            candidateSkills,
+            interview.requiredSkills
+          );
+
+          // Only notify if match is 60% or higher
+          if (!matchResult.shouldNotify) {
+            skippedCount++;
+            console.log(`   ⏭️ Skipped ${candidate.name} (${matchResult.matchPercentage}% match - below 60% threshold)`);
+            continue;
+          }
+
+          // Create smart notification with match percentage
+          notifications.push({
+            recipientId: candidate._id,
+            type: 'new_interview',
+            title: `🎯 ${matchResult.matchPercentage}% Match - ${interview.title || interview.stream}`,
+            message: `An interview application is available that matches your skill set: ${interview.title || interview.stream} at ${interview.company || recruiter.company || recruiter.name}. You match ${matchResult.totalMatched}/${matchResult.totalRequired} required skills!`,
+            interviewId: interview._id,
+            recruiterId: interview.recruiterId,
+            stream: interview.stream,
+            metadata: {
+              difficulty: interview.difficulty,
+              recruiterName: recruiter.name,
+              recruiterCompany: recruiter.company || interview.company,
+              interviewStatus: interview.applicationStatus,
+              skillMatchPercentage: matchResult.matchPercentage,
+              matchedSkills: matchResult.matchedSkills,
+              missingSkills: matchResult.missingSkills,
+              totalRequired: matchResult.totalRequired,
+              totalMatched: matchResult.totalMatched
+            }
+          });
+
+          matchedCount++;
+          console.log(`   ✅ Matched ${candidate.name} (${matchResult.matchPercentage}% match)`);
+
+        } else {
+          // No skill requirements - notify all candidates in stream (legacy behavior)
+          notifications.push({
+            recipientId: candidate._id,
+            type: 'new_interview',
+            title: `New ${interview.stream} Interview Available!`,
+            message: `A new ${interview.difficulty} level interview for ${interview.stream} has been posted by ${interview.company || recruiter.company || recruiter.name}. Apply now!`,
+            interviewId: interview._id,
+            recruiterId: interview.recruiterId,
+            stream: interview.stream,
+            metadata: {
+              difficulty: interview.difficulty,
+              recruiterName: recruiter.name,
+              recruiterCompany: recruiter.company,
+              interviewStatus: interview.applicationStatus
+            }
+          });
+          matchedCount++;
         }
-      }));
+      }
+
+      console.log(`\n📊 Matching Summary:`);
+      console.log(`   Total Candidates: ${candidates.length}`);
+      console.log(`   Matched (≥60%): ${matchedCount}`);
+      console.log(`   Skipped (<60%): ${skippedCount}`);
 
       // Bulk insert notifications
-      const result = await Notification.insertMany(notifications);
+      if (notifications.length > 0) {
+        const result = await Notification.insertMany(notifications);
+        console.log(`\n✅ Successfully created ${result.length} smart notifications!`);
+        console.log(`${'='.repeat(60)}\n`);
 
-      console.log(`\n✅ Successfully created ${result.length} notifications!`);
-      console.log(`${'='.repeat(60)}\n`);
-
-      return {
-        success: true,
-        notificationsSent: result.length,
-        notifications: result
-      };
+        return {
+          success: true,
+          notificationsSent: result.length,
+          matchedCandidates: matchedCount,
+          skippedCandidates: skippedCount,
+          notifications: result
+        };
+      } else {
+        console.log(`\n⚠️ No candidates met the 60% skill match threshold`);
+        console.log(`${'='.repeat(60)}\n`);
+        
+        return {
+          success: true,
+          notificationsSent: 0,
+          matchedCandidates: 0,
+          skippedCandidates: skippedCount
+        };
+      }
 
     } catch (error) {
       console.error('❌ Error sending notifications:', error);
