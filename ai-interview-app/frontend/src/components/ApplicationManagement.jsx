@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { CheckCircle, XCircle, Clock, User, BookOpen, Target, TrendingUp, Award } from 'lucide-react';
+import ATSScoreModal from './ATSScoreModal';
 import './ApplicationManagement.css';
 
 const API_URL = import.meta.env.VITE_API_URL;
@@ -8,6 +9,7 @@ export default function ApplicationManagement() {
   const [applications, setApplications] = useState([]);
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState(null);
+  const [selectedApplication, setSelectedApplication] = useState(null); // For modal
   const [expandedApp, setExpandedApp] = useState(null); // For showing ATS details
 
   const getATSScoreColor = (score) => {
@@ -67,6 +69,7 @@ export default function ApplicationManagement() {
       if (!response.ok) throw new Error('Failed to process application');
 
       alert(`Application ${decision} successfully!`);
+      setSelectedApplication(null); // Close modal
       fetchApplications(); // Refresh the list
     } catch (err) {
       console.error('Error processing application:', err);
@@ -91,7 +94,19 @@ export default function ApplicationManagement() {
   }
 
   return (
-    <div className="application-management">
+    <>
+      {/* ATS Score Modal */}
+      {selectedApplication && (
+        <ATSScoreModal
+          application={selectedApplication}
+          onClose={() => setSelectedApplication(null)}
+          onAccept={(id) => handleDecision(id, 'accepted')}
+          onReject={(id) => handleDecision(id, 'rejected')}
+          isProcessing={processingId !== null}
+        />
+      )}
+
+      <div className="application-management">
       <h2>Pending Applications ({applications.length})</h2>
       
       <div className="applications-list">
@@ -115,16 +130,25 @@ export default function ApplicationManagement() {
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                   {app.atsScore !== null && app.atsScore !== undefined && (
-                    <div style={{
-                      background: getATSScoreColor(app.atsScore),
-                      color: 'white',
-                      padding: '8px 16px',
-                      borderRadius: '20px',
-                      fontWeight: 'bold',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '5px'
-                    }}>
+                    <div
+                      onClick={() => setSelectedApplication(app)}
+                      style={{
+                        background: getATSScoreColor(app.atsScore),
+                        color: 'white',
+                        padding: '8px 16px',
+                        borderRadius: '20px',
+                        fontWeight: 'bold',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '5px',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s',
+                        transform: 'scale(1)'
+                      }}
+                      onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.05)'}
+                      onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
+                      title="Click to view detailed ATS analysis"
+                    >
                       <Target size={16} />
                       ATS: {app.atsScore}%
                     </div>
@@ -154,108 +178,32 @@ export default function ApplicationManagement() {
                 )}
               </div>
 
-              {/* ATS Score Details */}
+              {/* ATS Score Details - View Modal Button */}
               {atsData && (
                 <div style={{ marginTop: '15px' }}>
                   <button
-                    onClick={() => setExpandedApp(isExpanded ? null : app._id)}
+                    onClick={() => setSelectedApplication(app)}
                     style={{
-                      background: '#f0f0f0',
+                      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                      color: 'white',
                       border: 'none',
-                      padding: '8px 12px',
+                      padding: '10px 16px',
                       borderRadius: '6px',
                       cursor: 'pointer',
                       width: '100%',
-                      textAlign: 'left',
                       fontWeight: '600',
                       display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center'
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                      gap: '8px',
+                      transition: 'all 0.2s'
                     }}
+                    onMouseOver={(e) => e.target.style.transform = 'translateY(-2px)'}
+                    onMouseOut={(e) => e.target.style.transform = 'translateY(0)'}
                   >
-                    <span style={{ color: '#0008ff' }}>📊 ATS Score Details</span>
-                    <span>{isExpanded ? '▲' : '▼'}</span>
+                    <Target size={18} />
+                    📊 View Detailed ATS Analysis
                   </button>
-                  
-                  {isExpanded && (
-                    <div style={{
-                      marginTop: '10px',
-                      padding: '15px',
-                      background: '#f9f9f9',
-                      borderRadius: '8px',
-                      border: '1px solid #e0e0e0'
-                    }}>
-                      <div style={{
-                        display: 'inline-block',
-                        background: getATSRecommendationBadge(atsData.recommendation),
-                        color: 'white',
-                        padding: '6px 14px',
-                        borderRadius: '15px',
-                        fontWeight: 'bold',
-                        marginBottom: '15px',
-                        fontSize: '0.9rem'
-                      }}>
-                        {atsData.recommendation}
-                      </div>
-                      
-                      <div style={{ marginBottom: '15px' }}>
-                        <strong>Score Breakdown:</strong>
-                        <div style={{ marginTop: '8px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                          <div>
-                            <div style={{ fontSize: '0.85rem', color: '#000000' }}>Keyword Match</div>
-                            <div style={{ fontWeight: 'bold', color: '#667eea' }}>{atsData.breakdown?.keywordMatch || 0}%</div>
-                          </div>
-                          <div>
-                            <div style={{ fontSize: '0.85rem', color: '#000000' }}>Experience</div>
-                            <div style={{ fontWeight: 'bold', color: '#667eea' }}>{atsData.breakdown?.experienceRelevance || 0}%</div>
-                          </div>
-                          <div>
-                            <div style={{ fontSize: '0.85rem', color: '#000000' }}>Education</div>
-                            <div style={{ fontWeight: 'bold', color: '#667eea' }}>{atsData.breakdown?.educationalAlignment || 0}%</div>
-                          </div>
-                          <div>
-                            <div style={{ fontSize: '0.85rem', color: '#000000' }}>Overall Fit</div>
-                            <div style={{ fontWeight: 'bold', color: '#667eea' }}>{atsData.breakdown?.overallFit || 0}%</div>
-                          </div>
-                        </div>
-                      </div>
-                      
-                      {atsData.strengths && atsData.strengths.length > 0 && (
-                        <div style={{ marginBottom: '12px' }}>
-                          <strong style={{ color: '#10b981', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                            <TrendingUp size={16} /> Strengths:
-                          </strong>
-                          <ul style={{ marginTop: '5px', paddingLeft: '20px', fontSize: '0.9rem', color: 'black' }}>
-                            {atsData.strengths.map((strength, idx) => (
-                              <li key={idx}>{strength}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                      
-                      {atsData.weaknesses && atsData.weaknesses.length > 0 && (
-                        <div style={{ marginBottom: '12px' }}>
-                          <strong style={{ color: '#ef4444', fontWeight: 'bold' }}>⚠️ Weaknesses:</strong>
-                          <ul style={{ marginTop: '5px', paddingLeft: '20px', fontSize: '0.9rem' , color: 'black' }}>
-                            {atsData.weaknesses.map((weakness, idx) => (
-                              <li key={idx}>{weakness}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                      
-                      {atsData.gapAnalysis && atsData.gapAnalysis.length > 0 && (
-                        <div>
-                          <strong style={{ color: 'black' }}>📋 Gap Analysis:</strong>
-                          <ul style={{ marginTop: '5px', paddingLeft: '20px', fontSize: '0.9rem', color: 'black' }}>
-                            {atsData.gapAnalysis.map((gap, idx) => (
-                              <li key={idx}>{gap}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                    </div>
-                  )}
                 </div>
               )}
 
@@ -282,5 +230,6 @@ export default function ApplicationManagement() {
         })}
       </div>
     </div>
+    </>
   );
 }

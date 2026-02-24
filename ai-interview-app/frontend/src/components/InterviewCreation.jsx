@@ -202,7 +202,7 @@ export default function InterviewCreation({ onClose, onSuccess }) {
             </select>
           </div>
 
-          <div className="form-group">
+          <div className="form-group" style = {{ color: '#666', fontSize: '0.85rem' }}>
             <label htmlFor="difficulty">Difficulty Level *</label>
             <select
               id="difficulty"

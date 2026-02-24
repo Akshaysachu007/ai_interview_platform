@@ -3,6 +3,8 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import * as tf from '@tensorflow/tfjs';
 import * as blazeface from '@tensorflow-models/blazeface';
+import FaceMetricsMonitor from '../components/FaceMetricsMonitor';
+import { useMediaPipeJS } from '../hooks/useInterviewHooks';
 import './AIInterview.css';
 
 const AIInterview = () => {
@@ -32,6 +34,7 @@ const AIInterview = () => {
     aiDetections: 0,
     warnings: []
   });
+  const [faceMetrics, setFaceMetrics] = useState(null); // Face detection metrics from MediaPipe
   const [loading, setLoading] = useState(false);
   const [webcamActive, setWebcamActive] = useState(false);
   const [faceCount, setFaceCount] = useState(0);
@@ -46,20 +49,40 @@ const AIInterview = () => {
   const [modelLoading, setModelLoading] = useState(true);
   const [noFaceCount, setNoFaceCount] = useState(0);
   const [multipleFaceCount, setMultipleFaceCount] = useState(0);
+  const [lookingAwayCount, setLookingAwayCount] = useState(0);
   const [lastViolationType, setLastViolationType] = useState(null);
   const noFaceCountRef = useRef(0);
   const multipleFaceCountRef = useRef(0);
+  const lookingAwayCountRef = useRef(0);
+  const lastMalpracticeWarningRef = useRef({ type: null, time: 0 });
   const detectionInFlightRef = useRef(false);
   const lastSnapshotAtRef = useRef(0);
   const detectionCanvasRef = useRef(null);
   const recentFaceCountsRef = useRef([]);
-  const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
   const detectionIntervalRef = useRef(null);
   const recognitionRef = useRef(null);
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
+  const pythonFrameIntervalRef = useRef(null);
+
+  // Initialize useMediaPipeJS hook for browser-based face detection
+  const {
+    videoRef: mediapiperVideoRef,
+    faceMetrics: mediapipeFaceMetrics,
+    error: mediapipeError,
+    loading: mediapipeLoading,
+    isAnalyzing: metricsAnalyzing,
+    startWebcam: startMediaPipeWebcam,
+    stopWebcam: stopMediaPipeWebcam,
+    analyzeFrame,
+    detectFaces
+  } = useMediaPipeJS();
+
+  // Use MediaPipe's videoRef so it's connected to the actual DOM element
+  // This ensures the hook can access the video stream for face detection
+  const videoRef = mediapiperVideoRef;
 
   const streams = [
     'Computer Science',
@@ -86,21 +109,26 @@ const AIInterview = () => {
           await tf.setBackend('webgl');
         }
 
-        // Wait for TensorFlow.js to be ready
-        await tf.ready();
+        // Wait for TensorFlow.js to be ready with timeout
+        const readyPromise = tf.ready();
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('TensorFlow ready timeout')), 5000)
+        );
+        
+        await Promise.race([readyPromise, timeoutPromise]);
         console.log('✅ TensorFlow.js backend ready:', tf.getBackend());
         
         // Load BlazeFace model with explicit configuration
         const model = await blazeface.load({
-          maxFaces: 3, // Keep this small for speed while still catching multiple faces
-          iouThreshold: 0.5, // Reduce duplicate boxes for the same face
-          scoreThreshold: 0.6 // Improve sensitivity for partial/low-light faces
+          maxFaces: 3,
+          iouThreshold: 0.5,
+          scoreThreshold: 0.6
         });
         
         setFaceDetectionModel(model);
         console.log('✅ Face detection model loaded successfully!');
-        console.log('   - Max faces:', 3);
-        console.log('   - Score threshold:', 0.6);
+        console.log('   - Max faces: 3');
+        console.log('   - Score threshold: 0.6');
         setModelLoading(false);
         return; // Success, exit retry loop
       } catch (error) {
@@ -108,7 +136,8 @@ const AIInterview = () => {
         console.error(`❌ Error loading face detection model (Attempt ${attempt}/${maxRetries}):`, error);
         
         if (attempt >= maxRetries) {
-          console.error('⚠️ Could not load face detection model after ' + maxRetries + ' attempts.');
+          console.warn('⚠️ Could not load face detection model after ' + maxRetries + ' attempts.');
+          console.warn('   Continuing without face detection...');
           setModelLoading(false);
           setFaceDetectionModel(null);
         } else {
@@ -129,6 +158,18 @@ const AIInterview = () => {
       console.log('🔄 Detected active interview from localStorage:', activeInterviewId);
       // Load the interview data
       loadAcceptedInterview(activeInterviewId);
+    }
+
+    // Load malpractices from localStorage (page refresh recovery)
+    const savedMalpractices = localStorage.getItem('currentMalpractices');
+    if (savedMalpractices) {
+      try {
+        const parsed = JSON.parse(savedMalpractices);
+        console.log('✅ Loaded malpractices from localStorage:', parsed);
+        setMalpractices(parsed);
+      } catch (e) {
+        console.log('Could not parse saved malpractices');
+      }
     }
   }, []);
 
@@ -185,6 +226,14 @@ const AIInterview = () => {
     }
   }, [interviewStarted, interviewCompleted, webcamActive, faceDetectionModel]);
 
+  // Persist malpractices to localStorage whenever they change
+  useEffect(() => {
+    if (interviewStarted && !interviewCompleted) {
+      localStorage.setItem('currentMalpractices', JSON.stringify(malpractices));
+      console.log('💾 Saved malpractices to localStorage:', malpractices);
+    }
+  }, [malpractices, interviewStarted, interviewCompleted]);
+
   // Detect tab switching
   useEffect(() => {
     if (!interviewStarted || interviewCompleted) return;
@@ -238,196 +287,151 @@ const AIInterview = () => {
     return () => clearInterval(timerInterval);
   }, [interviewStarted, interviewCompleted, remainingTime, timerWarningShown]);
 
-  // Webcam functionality with improved reliability
-  const startWebcam = async () => {
-    const maxRetries = 3;
-    let attempt = 0;
+  // Ensure MediaPipe detection and webcam start properly when interview begins
+  useEffect(() => {
+    if (!interviewStarted || interviewCompleted) {
+      // Interview not started yet, or interview is done
+      return;
+    }
+
+    console.log('📱 Starting MediaPipe webcam detection for interview...');
     
-    while (attempt < maxRetries) {
+    const startDetection = async () => {
       try {
-        console.log(`🎥 Requesting webcam access... (Attempt ${attempt + 1}/${maxRetries})`);
+        // Give UI time to render video element
+        await new Promise(resolve => setTimeout(resolve, 500));
         
-        // Stop any existing stream first
-        if (streamRef.current) {
-          console.log('🛑 Stopping existing stream...');
-          streamRef.current.getTracks().forEach(track => track.stop());
-          streamRef.current = null;
-        }
-        
-        // Clear video element
-        if (videoRef.current && videoRef.current.srcObject) {
-          videoRef.current.srcObject = null;
-        }
-        
-        // Check if getUserMedia is supported
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-          throw new Error('getUserMedia is not supported in this browser');
-        }
-        
-        // Request camera access with enhanced constraints
-        const mediaStream = await navigator.mediaDevices.getUserMedia({ 
-          video: { 
-            width: { min: 320, ideal: 640, max: 1280 },
-            height: { min: 240, ideal: 480, max: 720 },
-            facingMode: 'user',
-            frameRate: { ideal: 30 }
-          },
-          audio: false // Explicitly disable audio
-        });
-        
-        console.log('✅ Webcam access granted');
-        console.log('   - Stream tracks:', mediaStream.getTracks().length);
-        console.log('   - Stream active:', mediaStream.active);
-        console.log('   - Stream ID:', mediaStream.id);
-        
-        // Validate video tracks
-        const videoTracks = mediaStream.getVideoTracks();
-        if (videoTracks.length === 0) {
-          throw new Error('No video tracks available in stream');
-        }
-        
-        const videoTrack = videoTracks[0];
-        console.log('   - Video track label:', videoTrack.label);
-        console.log('   - Video track enabled:', videoTrack.enabled);
-        console.log('   - Video track ready state:', videoTrack.readyState);
-        
-        // Wait for video element to be available (with timeout)
-        if (!videoRef.current) {
-          console.log('⏳ Waiting for video element to be available...');
-          await new Promise((resolve, reject) => {
-            const checkInterval = setInterval(() => {
-              if (videoRef.current) {
-                clearInterval(checkInterval);
-                console.log('✅ Video element is now available');
-                resolve();
-              }
-            }, 100); // Check every 100ms
-            
-            // Timeout after 5 seconds
-            setTimeout(() => {
-              clearInterval(checkInterval);
-              if (!videoRef.current) {
-                console.error('❌ Video element not available after 5 seconds');
-                reject(new Error('Video element not available - please ensure the interview UI is loaded'));
-              }
-            }, 5000);
-          });
-        }
-        
-        console.log('📹 Attaching stream to video element...');
-        
-        // Set the new stream
-        videoRef.current.srcObject = mediaStream;
-        streamRef.current = mediaStream;
-      
-      // Explicitly set video attributes
-      videoRef.current.muted = true;
-      videoRef.current.playsInline = true;
-      videoRef.current.autoplay = true;
-      videoRef.current.controls = false;
-      
-      // Wait for video to load metadata and be ready with improved timeout
-      await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          console.warn('⚠️ Video loading timeout (10s), but continuing...');
-          resolve(); // Don't reject, just continue
-        }, 10000); // Increased to 10 seconds for slower devices
-        
-        const onLoadedMetadata = () => {
-          console.log('✅ Video metadata loaded');
-          console.log('   - Dimensions:', videoRef.current.videoWidth, 'x', videoRef.current.videoHeight);
-          checkVideoReady();
-        };
-        
-        const onCanPlay = () => {
-          console.log('✅ Video can play');
-          checkVideoReady();
-        };
-        
-        const checkVideoReady = () => {
-          if (videoRef.current && 
-              videoRef.current.readyState >= 2 && 
-              videoRef.current.videoWidth > 0 && 
-              videoRef.current.videoHeight > 0) {
-            clearTimeout(timeout);
-            videoRef.current.removeEventListener('loadedmetadata', onLoadedMetadata);
-            videoRef.current.removeEventListener('canplay', onCanPlay);
-            console.log('✅ Video fully ready!');
-            console.log('   - Ready state:', videoRef.current.readyState);
-            console.log('   - Dimensions:', videoRef.current.videoWidth, 'x', videoRef.current.videoHeight);
-            resolve();
-          }
-        };
-        
-        // Listen to multiple events for better reliability
-        videoRef.current.addEventListener('loadedmetadata', onLoadedMetadata);
-        videoRef.current.addEventListener('canplay', onCanPlay);
-        
-        // Check immediately in case video is already ready
-        checkVideoReady();
-      });
-      
-      // Explicitly play the video with validation
-      try {
-        console.log('▶️ Starting video playback...');
-        const playPromise = videoRef.current.play();
-        
-        if (playPromise !== undefined) {
-          await playPromise;
-          console.log('✅ Video play() successful');
-        }
-        
-        // Validate video is actually playing
-        if (videoRef.current.paused) {
-          throw new Error('Video is paused after play() call');
-        }
-        
-        console.log('   - Playing:', !videoRef.current.paused);
-        console.log('   - Current time:', videoRef.current.currentTime);
-        console.log('   - Duration:', videoRef.current.duration);
-        
+        // Call hook's startWebcam to attach stream to video element
+        await startMediaPipeWebcam();
+        console.log('✅ MediaPipe webcam detection started');
         setWebcamActive(true);
-        
-        // Start face detection only after confirming video is playing
-        console.log('🎯 Starting continuous real-time face detection...');
-        startFaceDetection();
-        
-        // Exit retry loop on success
-        return;
-      } catch (playError) {
-        console.error('❌ Video play error:', playError);
-        throw playError; // Trigger retry
-      }
-      
-    } catch (error) {
-      attempt++;
-      console.error(`❌ Webcam access error (Attempt ${attempt}/${maxRetries}):`, error);
-      
-      if (attempt >= maxRetries) {
-        // Final failure - show appropriate error message
-        if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
-          alert('⚠️ Camera Permission Denied\n\nPlease:\n1. Click the camera icon in your browser address bar\n2. Allow camera access\n3. Refresh the page and start the interview again\n\nNote: The interview cannot proceed without camera access for proctoring.');
-        } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
-          alert('⚠️ No Camera Found\n\nPlease connect a camera to your device and try again.\n\nThe interview requires a camera for proctoring.');
-        } else if (error.name === 'NotReadableError' || error.name === 'TrackStartError') {
-          alert('⚠️ Camera In Use\n\nYour camera is being used by another application.\n\nPlease:\n1. Close all other applications using your camera\n2. Refresh this page\n3. Try starting the interview again');
-        } else {
-          alert('⚠️ Camera Error\n\n' + error.message + '\n\nPlease refresh the page and try again.\nIf the problem persists, try restarting your browser.');
-        }
-        
-        // Don't set webcamActive on failure - interview should not proceed
+      } catch (err) {
+        console.error('❌ Error starting webcam detection:', err);
+        console.warn('⚠️ Webcam detection failed, but interview may continue');
         setWebcamActive(false);
-        throw error; // Propagate error to calling function
-      } else {
-        // Wait before retry with exponential backoff
-        console.log(`⏳ Retrying in ${1000 * attempt}ms...`);
-        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+      }
+    };
+
+    startDetection();
+  }, [interviewStarted, startMediaPipeWebcam]);
+
+  // MediaPipe face analysis: Start when interview begins
+  useEffect(() => {
+    if (!interviewStarted || interviewCompleted) {
+      // Clean up when not in interview
+      if (pythonFrameIntervalRef.current) {
+        clearInterval(pythonFrameIntervalRef.current);
+        pythonFrameIntervalRef.current = null;
+      }
+      stopMediaPipeWebcam();
+      return;
+    }
+
+    // Face detection is already running in useMediaPipeJS hook
+    // We don't need to call detectFaces() here - it's already using requestAnimationFrame
+    console.log('📹 Interview started - face detection should be active in background');
+
+    return () => {
+      if (pythonFrameIntervalRef.current) {
+        clearInterval(pythonFrameIntervalRef.current);
+        pythonFrameIntervalRef.current = null;
+      }
+    };
+  }, [interviewStarted, interviewCompleted, stopMediaPipeWebcam]);
+
+  // Update faceMetrics from MediaPipe - this syncs hook metrics to component state
+  // and tracks malpractice violations (no face, multiple faces, looking away)
+  useEffect(() => {
+    if (mediapipeFaceMetrics) {
+      console.log('📊 Face metrics updated:', {
+        face_detected: mediapipeFaceMetrics.face_detected,
+        face_count: mediapipeFaceMetrics.face_count,
+        head_pose: mediapipeFaceMetrics.head_pose,
+        eye_metrics: mediapipeFaceMetrics.eye_metrics,
+        violations: mediapipeFaceMetrics.violations
+      });
+      setFaceMetrics(mediapipeFaceMetrics);
+
+      // Sync faceCount from MediaPipe metrics so the UI status overlay updates
+      const detectedCount = mediapipeFaceMetrics.face_count ?? (mediapipeFaceMetrics.face_detected ? 1 : 0);
+      setFaceCount(detectedCount);
+
+      // --- Malpractice violation tracking from MediaPipe metrics ---
+      const now = Date.now();
+      const WARNING_THROTTLE_MS = 3000; // Only add a warning every 3 seconds per violation type
+
+      // Helper: add warning to malpractice state (throttled)
+      const addThrottledWarning = (type, message) => {
+        const last = lastMalpracticeWarningRef.current;
+        if (last.type !== type || (now - last.time) > WARNING_THROTTLE_MS) {
+          lastMalpracticeWarningRef.current = { type, time: now };
+          setMalpractices(prev => ({
+            ...prev,
+            warnings: [...prev.warnings, message]
+          }));
+        }
+      };
+
+      // 1) No face detected
+      if (!mediapipeFaceMetrics.face_detected || detectedCount === 0) {
+        noFaceCountRef.current += 1;
+        setNoFaceCount(noFaceCountRef.current);
+        console.log(`📊 No Face Count INCREMENTED to: ${noFaceCountRef.current} (Total Violations)`);
+
+        addThrottledWarning('NO_FACE',
+          `🚨 [${new Date().toLocaleTimeString()}] NO FACE DETECTED! Please ensure you are visible on camera.`
+        );
+
+        if (noFaceCountRef.current % 5 === 0) {
+          try { playWarningSound(); } catch (e) { /* ignore */ }
+        }
+      }
+      // 2) Multiple faces detected
+      else if (detectedCount > 1) {
+        multipleFaceCountRef.current += 1;
+        setMultipleFaceCount(multipleFaceCountRef.current);
+        console.log(`📊 Multiple Face Count INCREMENTED to: ${multipleFaceCountRef.current} (Total Violations)`);
+
+        addThrottledWarning('MULTIPLE_FACES',
+          `🚨 [${new Date().toLocaleTimeString()}] MULTIPLE FACES DETECTED (${detectedCount})! Only the candidate should be visible.`
+        );
+
+        if (multipleFaceCountRef.current % 5 === 0) {
+          try { playWarningSound(); } catch (e) { /* ignore */ }
+        }
+      }
+      // 3) Looking away (gaze not center) — only when exactly one face is detected
+      else if (detectedCount === 1) {
+        const gazeDir = mediapipeFaceMetrics.eye_metrics?.gaze_direction;
+        if (gazeDir && gazeDir !== 'center') {
+          lookingAwayCountRef.current += 1;
+          setLookingAwayCount(lookingAwayCountRef.current);
+          console.log(`📊 Looking Away Count INCREMENTED to: ${lookingAwayCountRef.current} (gaze: ${gazeDir})`);
+
+          addThrottledWarning('LOOKING_AWAY',
+            `👀 [${new Date().toLocaleTimeString()}] LOOKING AWAY (${gazeDir})! Please keep your eyes on the screen.`
+          );
+
+          if (lookingAwayCountRef.current % 10 === 0) {
+            try { playWarningSound(); } catch (e) { /* ignore */ }
+          }
+        }
       }
     }
-  }
-  
-  // If we reached here, all retries failed
-  throw new Error('Failed to start webcam after ' + maxRetries + ' attempts');
+  }, [mediapipeFaceMetrics]);
+
+  // Use hook's webcam function (already handles stream attachment to videoRef)
+  const startWebcam = async () => {
+    try {
+      console.log('🎥 Starting webcam via MediaPipe hook...');
+      await startMediaPipeWebcam();
+      console.log('✅ Webcam started successfully');
+      setWebcamActive(true);
+    } catch (err) {
+      console.error('❌ Webcam initialization error:', err);
+      setWebcamActive(false);
+      throw err;
+    }
   };
 
   const stopWebcam = () => {
@@ -821,6 +825,11 @@ const AIInterview = () => {
       console.log('🔄 Face detection will retry on next interval');
     }
   };
+
+  // NOTE: Metrics are now fetched directly from MediaPipe JS hook (useMediaPipeJS)
+  // No backend calls needed - all analysis happens in the browser
+
+  // NOTE: Frame streaming removed - using MediaPipe JS hook for in-browser analysis
 
   // Cleanup webcam on unmount or when interview completes
   useEffect(() => {
@@ -1339,48 +1348,7 @@ const AIInterview = () => {
           console.log(`⏱️ Resume: ${timeLimitMinutes}min time limit (full time)`);
         }
         
-        // 🆕 WAIT FOR MODEL TO LOAD BEFORE STARTING WEBCAM
-        console.log('🔄 Resuming interview, waiting for model to load...');
-        
-        // Create a promise that resolves when model is loaded
-        const waitForModel = new Promise((resolve) => {
-          // Check if model is already loaded
-          if (faceDetectionModel) {
-            console.log('✅ Model already loaded');
-            resolve();
-            return;
-          }
-          
-          // Otherwise, wait for it to load (check every 100ms)
-          const checkInterval = setInterval(() => {
-            if (faceDetectionModel) {
-              console.log('✅ Model loaded, clearing interval');
-              clearInterval(checkInterval);
-              resolve();
-            }
-          }, 100);
-          
-          // Safety timeout: if model doesn't load in 10 seconds, continue anyway
-          setTimeout(() => {
-            console.warn('⚠️ Model loading timeout, continuing without full detection');
-            clearInterval(checkInterval);
-            resolve();
-          }, 10000);
-        });
-        
-        // Wait for model to be ready
-        await waitForModel;
-        
-        // Now start webcam and face detection
-        setTimeout(async () => {
-          try {
-            await startWebcam();
-            console.log('✅ Webcam started successfully on resume');
-            console.log('✅ Face detection will start automatically');
-          } catch (err) {
-            console.error('❌ Webcam start error on resume:', err);
-          }
-        }, 500);
+        console.log('✅ Interview resumed - MediaPipe hook will handle webcam');
         
         alert(`✅ Resuming interview! Stream: ${interview.stream}, Difficulty: ${interview.difficulty}.`);
         return;
@@ -1491,27 +1459,14 @@ const AIInterview = () => {
       setInterviewStarted(true);
       setCurrentQuestionIndex(0);
       
-      // Wait a bit for React to render the video element
-      await new Promise(resolve => setTimeout(resolve, 300));
+      // The useMediaPipeJS hook will automatically start webcam when interviewStarted is true
+      // Wait for video and detection to be ready
+      console.log('🎥 Interview started - MediaPipe hook will handle webcam...');
+      await new Promise(resolve => setTimeout(resolve, 1000));
       
-      // NOW start webcam with retry logic (after video element exists)
-      console.log('🎥 Starting webcam now that video element is rendered...');
-      try {
-        await startWebcam();
-        console.log('✅ Webcam started successfully'); 
-      } catch (webcamError) {
-        console.error('❌ Failed to start webcam:', webcamError);
-        setLoading(false);
-        // Don't proceed with interview if camera fails
-        alert('⚠️ Camera is required for proctoring.\n\nThe interview cannot start without working camera access.\n\nPlease:\n1. Grant camera permissions\n2. Ensure no other app is using your camera\n3. Try refreshing the page\n\nIf issues persist, contact support.');
-        // Reset interview state if webcam fails
-        setInterviewStarted(false);
-        return;
-      }
-      
-      // Verify webcam is actually active before proceeding
-      if (!webcamActive || !videoRef.current || !videoRef.current.srcObject) {
-        throw new Error('Webcam failed to activate properly');
+      // Verify webcam started (check if video has stream)
+      if (!videoRef.current?.srcObject) {
+        throw new Error('Webcam failed to start - video element has no stream');
       }
       
       // Automatically read the first question
@@ -2025,6 +1980,13 @@ const previousQuestion = () => {
                 </div>
               </div>
 
+              {/* Face Metrics Monitor with Tabs */}
+              <FaceMetricsMonitor 
+                faceMetrics={faceMetrics}
+                webcamActive={webcamActive}
+                videoRef={videoRef}
+              />
+
               {/* Malpractice Monitor */}
               <div className="malpractice-monitor">
                 <h3>🚨 Proctoring System</h3>
@@ -2075,13 +2037,13 @@ const previousQuestion = () => {
                     <div className="stat-icon">�</div>
                     <div className="stat-content">
                       <span className="stat-label">Total Face Violations</span>
-                      <span className={`stat-value ${(noFaceCount + multipleFaceCount) > 0 ? 'warning' : ''}`}>
-                        {noFaceCount + multipleFaceCount}
+                      <span className={`stat-value ${(noFaceCount + multipleFaceCount + lookingAwayCount) > 0 ? 'warning' : ''}`}>
+                        {noFaceCount + multipleFaceCount + lookingAwayCount}
                       </span>
                     </div>
                   </div>
                   <div className="stat-item">
-                    <div className="stat-icon">�🚫</div>
+                    <div className="stat-icon">🚫</div>
                     <div className="stat-content">
                       <span className="stat-label">No Face Violations</span>
                       <span className={`stat-value ${noFaceCount > 0 ? 'warning' : ''}`}>
@@ -2095,6 +2057,15 @@ const previousQuestion = () => {
                       <span className="stat-label">Multiple Face Violations</span>
                       <span className={`stat-value ${multipleFaceCount > 0 ? 'warning' : ''}`}>
                         {multipleFaceCount} {multipleFaceCount === 1 ? 'time' : 'times'}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="stat-item">
+                    <div className="stat-icon">👀</div>
+                    <div className="stat-content">
+                      <span className="stat-label">Looking Away Violations</span>
+                      <span className={`stat-value ${lookingAwayCount > 0 ? 'warning' : ''}`}>
+                        {lookingAwayCount} {lookingAwayCount === 1 ? 'time' : 'times'}
                       </span>
                     </div>
                   </div>
@@ -2306,6 +2277,9 @@ const previousQuestion = () => {
                 setAnswer('');
                 setMalpractices({ tabSwitches: 0, aiDetections: 0, warnings: [] });
                 setResults(null);
+                // Clear persisted data
+                localStorage.removeItem('activeInterviewId');
+                localStorage.removeItem('currentMalpractices');
                 // Reset face violation counters for new interview
                 noFaceCountRef.current = 0;
                 multipleFaceCountRef.current = 0;
