@@ -100,6 +100,10 @@ const interviewSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  lookingAwayDetected: {
+    type: Number,
+    default: 0
+  },
   currentWebcamSnapshot: {
     type: String, // Base64 encoded image
     default: null
@@ -240,7 +244,31 @@ const interviewSchema = new mongoose.Schema({
     min: 5,
     max: 180
   },
+
+  // =====================================================================
+  // VIOLATION THRESHOLDS — Set by recruiter to auto-terminate interview
+  // A value of 0 means no limit (disabled). When a violation count reaches
+  // its threshold the interview is automatically terminated.
+  // =====================================================================
+  violationThresholds: {
+    noFace: { type: Number, default: 0, min: 0 },
+    multipleFace: { type: Number, default: 0, min: 0 },
+    lookingAway: { type: Number, default: 0, min: 0 },
+    tabSwitch: { type: Number, default: 0, min: 0 },
+    voiceChange: { type: Number, default: 0, min: 0 },
+    aiAnswer: { type: Number, default: 0, min: 0 }
+  },
   
+  // Whether interview was terminated due to violations
+  terminatedByViolation: {
+    type: Boolean,
+    default: false
+  },
+  terminationReason: {
+    type: String,
+    default: ''
+  },
+
   // Custom questions added by recruiter
   customQuestions: [{
     question: { type: String },
@@ -371,6 +399,11 @@ const interviewSchema = new mongoose.Schema({
   identityVerificationCompleted: {
     type: Boolean,
     default: false
+  },
+
+  identityVerificationSkipped: {
+    type: Boolean,
+    default: false // Set when candidate starts without completing verification
   },
   
   identityVerificationData: {

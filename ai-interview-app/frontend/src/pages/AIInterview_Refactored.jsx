@@ -147,10 +147,10 @@ const AIInterview = () => {
         setCurrentQuestionIndex(interview.currentQuestionIndex || 0);
       }
 
-      alert(`✅ Interview loaded: ${interview.stream} - ${interview.difficulty}`);
+      alert(`✅ Job loaded: ${interview.stream} - ${interview.difficulty}`);
     } catch (error) {
       console.error('Load interview error:', error);
-      alert('Failed to load interview');
+      alert('Failed to load job');
       navigate('/candidate/dashboard');
     } finally {
       setLoading(false);
@@ -179,10 +179,10 @@ const AIInterview = () => {
         setTimeout(() => speak(response.data.questions[0].question), 500);
       }
 
-      alert('✅ Interview started!');
+      alert('✅ Assessment started!');
     } catch (error) {
       console.error('Start interview error:', error);
-      alert('Error starting interview: ' + error.response?.data?.message);
+      alert('Error starting assessment: ' + error.response?.data?.message);
     } finally {
       setLoading(false);
     }
@@ -287,7 +287,7 @@ const AIInterview = () => {
       setResults(response.data);
       setInterviewCompleted(true);
 
-      alert(`🏁 Interview Complete!\nScore: ${response.data.score}/100`);
+      alert(`🏁 Assessment Complete!\nScore: ${response.data.score}/100`);
 
       setTimeout(() => navigate('/candidate/dashboard'), 2000);
     } catch (error) {
@@ -332,7 +332,7 @@ const AIInterview = () => {
 
   return (
     <div className="ai-interview-container">
-      <h1>🎯 AI-Powered Interview System</h1>
+      <h1>🎯 AI-Powered Job Assessment</h1>
       <p className="subtitle">With Real-time Face Analysis</p>
 
       {/* SETUP PHASE */}
@@ -355,7 +355,7 @@ const AIInterview = () => {
       {interviewStarted && !interviewCompleted && (
         <div className="interview-section">
           <div className="interview-header">
-            <h2>📝 Interview in Progress</h2>
+            <h2>📝 Assessment in Progress</h2>
             <div className="interview-info">
               <span className="badge">Q {currentQuestionIndex + 1}/{questions.length}</span>
               <span className="badge">⏱️ {formatTime()}</span>
@@ -409,7 +409,7 @@ const AIInterview = () => {
       {/* RESULTS PHASE */}
       {interviewCompleted && results && (
         <div className="results-section">
-          <h2>🎉 Interview Completed!</h2>
+          <h2>🎉 Assessment Completed!</h2>
           <ResultsCard results={results} />
           <div className="button-group">
             <button className="btn btn-primary" onClick={() => {
@@ -420,7 +420,7 @@ const AIInterview = () => {
               setResults(null);
               resetMalpractices();
             }}>
-              🔄 New Interview
+              🔄 New Assessment
             </button>
             <button className="btn btn-secondary" onClick={getInterviewStats}>
               📊 Statistics

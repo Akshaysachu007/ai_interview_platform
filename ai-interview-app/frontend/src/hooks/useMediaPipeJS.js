@@ -10,6 +10,9 @@ export const useMediaPipeJS = () => {
   const [loading, setLoading] = useState(true);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   
+  // External pause control — when true, detection loop skips analysis
+  const pauseRef = useRef(false);
+  
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const videoInitializedRef = useRef(false);
@@ -17,6 +20,9 @@ export const useMediaPipeJS = () => {
   const faceLandmarkerRef = useRef(null);
   const webcamRef = useRef(null);
   const animationIdRef = useRef(null);
+  const detectFacesRef = useRef(null);
+  const loadingRef = useRef(true);
+  const initializeMediaPipeRef = useRef(null);
   
   // State tracking for analysis
   const blinkCountRef = useRef(0);
@@ -27,6 +33,7 @@ export const useMediaPipeJS = () => {
   // Initialize MediaPipe models
   const initializeMediaPipe = useCallback(async () => {
     try {
+      loadingRef.current = true;
       setLoading(true);
       console.log('🔄 [INIT] Loading MediaPipe models...');
 
@@ -95,6 +102,7 @@ export const useMediaPipeJS = () => {
         console.log('     - FaceDetectorRef:', !!faceDetectorRef.current);
         console.log('     - FaceLandmarkerRef:', !!faceLandmarkerRef.current);
         setError(null);
+        loadingRef.current = false;
         setLoading(false);
       } catch (innerErr) {
         console.error('❌ [INIT] Model initialization error:', innerErr.message);
@@ -103,16 +111,39 @@ export const useMediaPipeJS = () => {
     } catch (err) {
       console.warn('⚠️ [INIT] MediaPipe initialization failed (will use fallback):', err.message);
       setError(null); // Don't show error to user, use graceful degradation
+      loadingRef.current = false;
       setLoading(false); // Mark as done loading (without models)
       // Models failed, but app can continue without face detection
     }
   }, []);
 
+  // Keep ref in sync for use in detection loop (avoids stale closures)
+  initializeMediaPipeRef.current = initializeMediaPipe;
+
+  // Guard against concurrent startWebcam calls
+  const webcamStartingRef = useRef(false);
+
   // Start webcam
   const startWebcam = useCallback(async (attemptCount = 0) => {
+    // Prevent concurrent calls
+    if (webcamStartingRef.current && attemptCount === 0) {
+      console.log('⚠️ startWebcam already in progress, skipping duplicate call');
+      return;
+    }
+    if (attemptCount === 0) {
+      webcamStartingRef.current = true;
+    }
+
     try {
       if (attemptCount === 0) {
         console.log('🎥 Requesting camera access... (Attempt 1/3)');
+      }
+
+      // If we already have an active stream, reuse it
+      if (webcamRef.current?.stream?.active && videoRef.current?.srcObject) {
+        console.log('✅ Webcam already active, reusing existing stream');
+        webcamStartingRef.current = false;
+        return;
       }
       
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -125,15 +156,23 @@ export const useMediaPipeJS = () => {
 
       // Wait for video ref to be available with timeout
       let waitCount = 0;
-      while (!videoRef.current && waitCount < 20) {
-        console.log('⏳ Waiting for video element to be available... (Wait', waitCount + 1, '/20)');
-        await new Promise(resolve => setTimeout(resolve, 250));
+      while (!videoRef.current && waitCount < 30) {
+        console.log('⏳ Waiting for video element to be available... (Wait', waitCount + 1, '/30)');
+        await new Promise(resolve => setTimeout(resolve, 300));
         waitCount++;
       }
 
       if (videoRef.current) {
         // Attach stream to video element
         videoRef.current.srcObject = stream;
+        
+        // Explicitly play the video (autoPlay may not be enough in all browsers)
+        try {
+          await videoRef.current.play();
+          console.log('✅ Video play() succeeded');
+        } catch (playErr) {
+          console.warn('⚠️ Video play() issue (may auto-recover):', playErr.message);
+        }
         
         // Wait for video to be ready
         const videoReadyPromise = new Promise((resolve) => {
@@ -145,13 +184,18 @@ export const useMediaPipeJS = () => {
               requestAnimationFrame(checkReady);
             }
           };
-          requestAnimationFrame(checkReady);
+          // Check immediately first
+          if (videoRef.current && videoRef.current.readyState >= 2) {
+            resolve();
+          } else {
+            requestAnimationFrame(checkReady);
+          }
         });
         
-        // Wait max 5 seconds for video to be ready
+        // Wait max 8 seconds for video to be ready
         await Promise.race([
           videoReadyPromise,
-          new Promise((resolve) => setTimeout(resolve, 5000))
+          new Promise((resolve) => setTimeout(resolve, 8000))
         ]);
         
         webcamRef.current = {
@@ -173,6 +217,17 @@ export const useMediaPipeJS = () => {
         
         setError(null);
         videoInitializedRef.current = true;
+        
+        // Start detection loop now that webcam is ready
+        if (!animationIdRef.current) {
+          console.log('🚀 Starting detection loop (timer-based, scroll-safe)...');
+          // detectFaces is defined later, so use a delayed call
+          animationIdRef.current = setTimeout(() => {
+            if (detectFacesRef.current) detectFacesRef.current();
+          }, 100);
+        }
+        
+        webcamStartingRef.current = false;
       } else {
         throw new Error('Video element not available - please ensure the interview UI is loaded');
       }
@@ -187,6 +242,7 @@ export const useMediaPipeJS = () => {
         // All retries failed, but continue without webcam
         console.warn('⚠️ Could not access webcam, continuing without camera');
         setError(null);
+        webcamStartingRef.current = false;
       }
     }
   }, []);
@@ -627,6 +683,10 @@ export const useMediaPipeJS = () => {
     }
   }, [calculateHeadPose, calculateEAR, calculateHeadRoll, detectEyeGaze, detectEmotion]);
 
+  // Track model retry attempts in detection loop
+  const modelRetryCountRef = useRef(0);
+  const MODEL_RETRY_MAX = 3;
+
   // Main detection loop — uses setTimeout instead of requestAnimationFrame
   // so that detection keeps running even when the video element is scrolled off-screen.
   const DETECTION_INTERVAL = 150; // ms between frames (~6-7 fps, plenty for face metrics)
@@ -653,8 +713,14 @@ export const useMediaPipeJS = () => {
         return;
       }
 
-      // MODELS NOT READY - DIAGNOSTIC LOG
+      // MODELS NOT READY — retry loading if not already retrying
       if (!faceLandmarkerRef.current || !faceDetectorRef.current) {
+        if (modelRetryCountRef.current < MODEL_RETRY_MAX && !loadingRef.current) {
+          modelRetryCountRef.current++;
+          console.log(`🔄 Models not loaded, retrying initialization (attempt ${modelRetryCountRef.current}/${MODEL_RETRY_MAX})...`);
+          // Re-trigger model loading via ref (doesn't change detectFaces identity)
+          if (initializeMediaPipeRef.current) initializeMediaPipeRef.current();
+        }
         setFaceMetrics({
           face_detected: false,
           face_count: 0,
@@ -665,7 +731,16 @@ export const useMediaPipeJS = () => {
           confidence: 0,
           timestamp: new Date().toISOString()
         });
-        animationIdRef.current = setTimeout(detectFaces, 1000);
+        animationIdRef.current = setTimeout(detectFaces, 2000);
+        return;
+      }
+
+      // Models are ready — reset retry counter
+      modelRetryCountRef.current = 0;
+
+      // If paused (e.g. violation alert showing), skip analysis this frame
+      if (pauseRef.current) {
+        animationIdRef.current = setTimeout(detectFaces, 500);
         return;
       }
 
@@ -677,6 +752,9 @@ export const useMediaPipeJS = () => {
     // Always schedule next iteration
     animationIdRef.current = setTimeout(detectFaces, DETECTION_INTERVAL);
   }, [analyzeFrame]);
+
+  // Keep detectFacesRef in sync
+  detectFacesRef.current = detectFaces;
 
   // Initialize on mount
   useEffect(() => {
@@ -703,20 +781,10 @@ export const useMediaPipeJS = () => {
         console.log('   - Video dimensions:', videoRef.current.videoWidth + 'x' + videoRef.current.videoHeight);
       }
       
-      // Start detection loop IMMEDIATELY (don't wait for webcam)
-      // Uses setTimeout so it keeps running even when scrolled off-screen
-      if (!animationIdRef.current) {
-        console.log('🚀 Starting detection loop (timer-based, scroll-safe)...');
-        animationIdRef.current = setTimeout(detectFaces, 100);
-      }
-      
-      // Start webcam in parallel (non-blocking)
-      startWebcam().then(() => {
-        console.log('✅ Webcam stream attached and detection loop running');
-      }).catch((err) => {
-        console.warn('⚠️ Webcam start failed:', err);
-        console.log('   Detection loop may still work if video element was pre-populated');
-      });
+      // Only start detection loop when video element is actually available
+      // The component (AIInterview) will call startWebcam() when the interview starts
+      // and the video element is rendered
+      console.log('✅ MediaPipe models ready. Waiting for startWebcam() to be called by component.');
     }
 
     return () => {
@@ -758,6 +826,7 @@ export const useMediaPipeJS = () => {
     error,
     loading,
     isAnalyzing,
+    pauseRef,
     startWebcam,
     stopWebcam,
     resetMetrics,

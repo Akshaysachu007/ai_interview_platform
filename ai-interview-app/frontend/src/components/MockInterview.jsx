@@ -69,8 +69,8 @@ export default function MockInterview() {
   return (
     <div className="mock-interview-container">
       <div className="mock-header">
-        <h2>🎯 Practice Mock Interview</h2>
-        <p>Prepare yourself with AI-powered practice interviews</p>
+        <h2>🎯 Practice Test</h2>
+        <p>Prepare yourself with AI-powered practice tests</p>
       </div>
 
       <div className="mock-form">
@@ -130,7 +130,7 @@ export default function MockInterview() {
           <ul>
             <li>✅ 5 AI-generated questions based on your selected stream</li>
             <li>✅ Real-time AI detection of your answers</li>
-            <li>✅ Proctoring features active (just like real interview)</li>
+            <li>✅ Proctoring features active (just like real assessment)</li>
             <li>✅ Detailed performance report after completion</li>
             <li>✅ No recruiter - practice at your own pace</li>
           </ul>
@@ -146,7 +146,7 @@ export default function MockInterview() {
           ) : (
             <>
               <Play size={20} />
-              Start Mock Interview
+              Start Practice Test
             </>
           )}
         </button>

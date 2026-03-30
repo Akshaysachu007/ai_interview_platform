@@ -36,7 +36,7 @@ export default function RecruiterInterviews() {
   };
 
   const handleDelete = async (interviewId, interviewStream) => {
-    if (!confirm(`Are you sure you want to delete this ${interviewStream} interview?`)) {
+    if (!confirm(`Are you sure you want to delete this ${interviewStream} job?`)) {
       return;
     }
 
@@ -52,10 +52,10 @@ export default function RecruiterInterviews() {
 
       if (!response.ok) {
         const data = await response.json();
-        throw new Error(data.message || 'Failed to delete interview');
+        throw new Error(data.message || 'Failed to delete job');
       }
 
-      alert('Interview deleted successfully!');
+      alert('Job deleted successfully!');
       fetchInterviews(); // Refresh the list
     } catch (err) {
       console.error('Error deleting interview:', err);
@@ -66,35 +66,40 @@ export default function RecruiterInterviews() {
   };
 
   const getStatusBadge = (status, applicationStatus) => {
-    if (applicationStatus === 'open') {
+    // Check interview completion status first
+    if (status === 'completed') {
+      return { text: 'Completed', color: 'green', icon: CheckCircle };
+    } else if (status === 'in-progress') {
+      return { text: 'In Progress', color: 'blue', icon: Clock };
+    } else if (applicationStatus === 'open') {
       return { text: 'Open', color: 'blue', icon: Clock };
     } else if (applicationStatus === 'pending') {
       return { text: 'Pending Review', color: 'orange', icon: Clock };
     } else if (applicationStatus === 'accepted') {
       return { text: 'Accepted', color: 'green', icon: CheckCircle };
-    } else if (status === 'completed') {
-      return { text: 'Completed', color: 'gray', icon: CheckCircle };
+    } else if (applicationStatus === 'rejected') {
+      return { text: 'Rejected', color: 'red', icon: XCircle };
     }
-    return { text: status, color: 'gray', icon: null };
+    return { text: status || applicationStatus, color: 'gray', icon: null };
   };
 
   if (loading) {
-    return <div className="loading">Loading interviews...</div>;
+    return <div className="loading">Loading jobs...</div>;
   }
 
   if (interviews.length === 0) {
     return (
       <div className="no-interviews">
         <BookOpen size={48} />
-        <h3>No Interviews Created</h3>
-        <p>Click "Create Interview" to post your first interview opportunity.</p>
+        <h3>No Jobs Created</h3>
+        <p>Click "Create Job" to post your first job opportunity.</p>
       </div>
     );
   }
 
   return (
     <div className="recruiter-interviews">
-      <h2>My Interviews ({interviews.length})</h2>
+      <h2>My Jobs ({interviews.length})</h2>
       
       <div className="interviews-grid">
         {interviews.map((interview) => {
@@ -140,6 +145,39 @@ export default function RecruiterInterviews() {
                     <span>Started: {new Date(interview.startTime).toLocaleString()}</span>
                   </div>
                 )}
+                {interview.status === 'completed' && interview.completedAt && (
+                  <div className="detail-item">
+                    <CheckCircle size={14} />
+                    <span>Completed: {new Date(interview.completedAt).toLocaleString()}</span>
+                  </div>
+                )}
+                {interview.status === 'completed' && interview.score !== undefined && interview.score !== null && (
+                  <div className="detail-item">
+                    <Award size={14} />
+                    <span style={{ fontWeight: 'bold', color: interview.score >= 70 ? '#27ae60' : interview.score >= 50 ? '#f39c12' : '#e74c3c' }}>
+                      Score: {interview.score}/100
+                    </span>
+                  </div>
+                )}
+                {interview.status === 'completed' && interview.recommendation && (
+                  <div className="detail-item">
+                    <Award size={14} />
+                    <span style={{ 
+                      fontWeight: 'bold',
+                      color: interview.recommendation === 'Strong Hire' ? '#10b981' : 
+                             interview.recommendation === 'Hire' ? '#22c55e' : 
+                             interview.recommendation === 'Maybe' ? '#f59e0b' : '#ef4444'
+                    }}>
+                      {interview.recommendation}
+                    </span>
+                  </div>
+                )}
+                {interview.flagged && (
+                  <div className="detail-item" style={{ color: '#e74c3c' }}>
+                    <XCircle size={14} />
+                    <span style={{ fontWeight: 'bold' }}>⚠️ Flagged</span>
+                  </div>
+                )}
               </div>
 
               <div className="card-actions">
@@ -156,7 +194,7 @@ export default function RecruiterInterviews() {
                   className="btn-delete"
                   onClick={() => handleDelete(interview._id, interview.stream)}
                   disabled={deletingId === interview._id || interview.status === 'in-progress'}
-                  title={interview.status === 'in-progress' ? 'Cannot delete in-progress interview' : 'Delete interview'}
+                  title={interview.status === 'in-progress' ? 'Cannot delete in-progress job' : 'Delete job'}
                 >
                   <Trash2 size={16} />
                   {deletingId === interview._id ? 'Deleting...' : 'Delete'}

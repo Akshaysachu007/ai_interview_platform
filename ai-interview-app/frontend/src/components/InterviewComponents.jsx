@@ -250,7 +250,7 @@ export const ResultsCard = ({ results }) => (
 
     {results.flagged && (
       <div className="flagged-notice">
-        🚩 Interview flagged for review
+        🚩 Job flagged for review
       </div>
     )}
   </div>
@@ -273,7 +273,7 @@ export const InterviewSetup = ({
   isFromAccepted
 }) => (
   <div className="setup-section">
-    <h2>Start Your Interview</h2>
+    <h2>Start Your Assessment</h2>
 
     {isFromAccepted && (
       <div style={{
@@ -283,7 +283,7 @@ export const InterviewSetup = ({
         borderRadius: '8px',
         marginBottom: '20px'
       }}>
-        <strong>✅ Accepted Interview</strong>
+        <strong>✅ Accepted Job</strong>
         <p>Settings locked by recruiter</p>
       </div>
     )}
@@ -315,7 +315,7 @@ export const InterviewSetup = ({
     </div>
 
     <button className="btn btn-primary" onClick={onStart} disabled={loading}>
-      {loading ? '⏳ Starting...' : '🚀 Start Interview'}
+      {loading ? '⏳ Starting...' : '🚀 Start Assessment'}
     </button>
 
     {!isFromAccepted && (

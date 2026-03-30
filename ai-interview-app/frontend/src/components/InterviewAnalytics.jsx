@@ -66,7 +66,7 @@ export default function InterviewAnalytics() {
   })) || [];
 
   const realScoreData = realStats?.recentInterviews?.map((item, index) => ({
-    name: `Interview ${index + 1}`,
+    name: `Assessment ${index + 1}`,
     score: item.score || 0,
     date: new Date(item.createdAt).toLocaleDateString()
   })) || [];
@@ -95,7 +95,7 @@ export default function InterviewAnalytics() {
         <div className="summary-card mock">
           <Target size={32} />
           <div>
-            <h3>Mock Interviews</h3>
+            <h3>Practice Tests</h3>
             <div className="stat-value">{mockStats?.totalMockInterviews || 0}</div>
             <p>Avg Score: {mockStats?.averageMockScore || 0}/100</p>
           </div>
@@ -104,7 +104,7 @@ export default function InterviewAnalytics() {
         <div className="summary-card real">
           <Award size={32} />
           <div>
-            <h3>Real Interviews</h3>
+            <h3>Job Assessments</h3>
             <div className="stat-value">{realStats?.totalInterviews || 0}</div>
             <p>Avg Score: {realStats?.averageScore || 0}/100</p>
           </div>
@@ -125,7 +125,7 @@ export default function InterviewAnalytics() {
       {/* Mock Test Analysis */}
       {mockScoreData.length > 0 && (
         <div className="chart-container">
-          <h3>🎯 Mock Interview Progress</h3>
+          <h3>🎯 Practice Test Progress</h3>
           <ResponsiveContainer width="100%" height={300}>
             <LineChart data={mockScoreData}>
               <CartesianGrid strokeDasharray="3 3" />
@@ -145,7 +145,7 @@ export default function InterviewAnalytics() {
             </LineChart>
           </ResponsiveContainer>
           <p className="chart-description">
-            Track your improvement across mock interviews. Each point represents a completed mock test.
+            Track your improvement across practice tests. Each point represents a completed mock test.
           </p>
         </div>
       )}
@@ -153,7 +153,7 @@ export default function InterviewAnalytics() {
       {/* Real Interview Analysis */}
       {realScoreData.length > 0 && (
         <div className="chart-container">
-          <h3>💼 Real Interview Performance</h3>
+          <h3>💼 Job Assessment Performance</h3>
           <ResponsiveContainer width="100%" height={300}>
             <LineChart data={realScoreData}>
               <CartesianGrid strokeDasharray="3 3" />
@@ -168,12 +168,12 @@ export default function InterviewAnalytics() {
                 strokeWidth={3}
                 dot={{ fill: '#43e97b', r: 6 }}
                 activeDot={{ r: 8 }}
-                name="Interview Score"
+                name="Assessment Score"
               />
             </LineChart>
           </ResponsiveContainer>
           <p className="chart-description">
-            Your performance in real interviews with recruiters.
+            Your performance in job assessments with recruiters.
           </p>
         </div>
       )}
@@ -189,12 +189,12 @@ export default function InterviewAnalytics() {
               <YAxis domain={[0, 100]} />
               <Tooltip />
               <Legend />
-              <Bar dataKey="mock" fill="#667eea" name="Mock Tests" />
-              <Bar dataKey="real" fill="#43e97b" name="Real Interviews" />
+              <Bar dataKey="mock" fill="#667eea" name="Practice Tests" />
+              <Bar dataKey="real" fill="#43e97b" name="Job Assessments" />
             </BarChart>
           </ResponsiveContainer>
           <p className="chart-description">
-            Compare your performance across different streams in mock vs real interviews.
+            Compare your performance across different streams in practice vs job assessments.
           </p>
         </div>
       )}
@@ -236,7 +236,7 @@ export default function InterviewAnalytics() {
             </ResponsiveContainer>
           </div>
           <p className="chart-description">
-            Distribution of interviews by difficulty level and performance.
+            Distribution of assessments by difficulty level and performance.
           </p>
         </div>
       )}
@@ -248,14 +248,14 @@ export default function InterviewAnalytics() {
           {mockStats?.averageMockScore > realStats?.averageScore && (
             <div className="insight-card positive">
               <h4>Strong Practice Performance</h4>
-              <p>Your mock interview scores are higher than real interviews. Keep practicing to close the gap!</p>
+              <p>Your mock test scores are higher than job assessments. Keep practicing to close the gap!</p>
             </div>
           )}
 
           {mockStats?.totalMockInterviews < 5 && (
             <div className="insight-card warning">
               <h4>More Practice Recommended</h4>
-              <p>Take at least 5 mock interviews to build confidence before real interviews.</p>
+              <p>Take at least 5 practice tests to build confidence before job assessments.</p>
             </div>
           )}
 
@@ -269,7 +269,7 @@ export default function InterviewAnalytics() {
           {streamComparisonData.length > 2 && (
             <div className="insight-card info">
               <h4>Diverse Experience</h4>
-              <p>You've interviewed across multiple streams. This versatility is valuable!</p>
+              <p>You've been assessed across multiple streams. This versatility is valuable!</p>
             </div>
           )}
         </div>

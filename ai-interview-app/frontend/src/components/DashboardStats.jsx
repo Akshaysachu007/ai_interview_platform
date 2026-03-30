@@ -6,6 +6,7 @@ const API_URL = import.meta.env.VITE_API_URL;
 export default function DashboardStats() {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     fetchStats();
@@ -17,23 +18,35 @@ export default function DashboardStats() {
       const res = await fetch(`${API_URL}/admin/stats`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
+      if (res.status === 401) {
+        localStorage.removeItem('adminToken');
+        localStorage.removeItem('adminName');
+        localStorage.removeItem('adminEmail');
+        window.location.href = '/admin';
+        return;
+      }
       const data = await res.json();
       if (res.ok) {
         setStats(data);
+      } else {
+        setError(data.message || 'Failed to load statistics');
       }
     } catch (err) {
       console.error('Error fetching stats:', err);
+      setError('Network error: ' + err.message);
     } finally {
       setLoading(false);
     }
   };
 
-  if (loading) return <div>Loading statistics...</div>;
+  if (loading) return <div className="loading-msg">Loading statistics...</div>;
+  if (error) return <div className="error-message" style={{padding:'20px',color:'#c0392b',background:'#fdecea',borderRadius:'8px',margin:'16px'}}>⚠️ {error} — Check that the backend server is running and you are logged in.</div>;
 
   return (
     <div className="dashboard-stats">
       <h2>System Overview</h2>
       
+      <div className="stats-section-label">Users</div>
       <div className="stats-grid">
         <div className="stat-card blue">
           <div className="stat-icon">👥</div>
@@ -66,7 +79,45 @@ export default function DashboardStats() {
             <p>Pending Verification</p>
           </div>
         </div>
-        
+      </div>
+
+      <div className="stats-section-label">Interviews</div>
+      <div className="stats-grid">
+        <div className="stat-card teal">
+          <div className="stat-icon">🎯</div>
+          <div className="stat-info">
+            <h3>{stats?.totalInterviews || 0}</h3>
+            <p>Total Interviews</p>
+          </div>
+        </div>
+
+        <div className="stat-card blue">
+          <div className="stat-icon">▶</div>
+          <div className="stat-info">
+            <h3>{stats?.activeInterviews || 0}</h3>
+            <p>Active Interviews</p>
+          </div>
+        </div>
+
+        <div className="stat-card green">
+          <div className="stat-icon">✅</div>
+          <div className="stat-info">
+            <h3>{stats?.completedInterviews || 0}</h3>
+            <p>Completed Interviews</p>
+          </div>
+        </div>
+
+        <div className="stat-card red">
+          <div className="stat-icon">⚠️</div>
+          <div className="stat-info">
+            <h3>{stats?.flaggedInterviews || 0}</h3>
+            <p>Flagged Interviews</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="stats-section-label">Subscriptions</div>
+      <div className="stats-grid">
         <div className="stat-card teal">
           <div className="stat-icon">💳</div>
           <div className="stat-info">

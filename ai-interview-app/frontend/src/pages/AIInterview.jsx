@@ -4,6 +4,7 @@ import axios from 'axios';
 import * as tf from '@tensorflow/tfjs';
 import * as blazeface from '@tensorflow-models/blazeface';
 import FaceMetricsMonitor from '../components/FaceMetricsMonitor';
+import IdentityVerification from '../components/IdentityVerification';
 import { useMediaPipeJS } from '../hooks/useInterviewHooks';
 import './AIInterview.css';
 
@@ -20,9 +21,13 @@ const AIInterview = () => {
   const [interviewId, setInterviewId] = useState(null);
   const [loadingInterview, setLoadingInterview] = useState(false);
   const [isFromAcceptedApplication, setIsFromAcceptedApplication] = useState(false);
+  const [needsIdentityVerification, setNeedsIdentityVerification] = useState(false);
+  const [identityVerified, setIdentityVerified] = useState(false);
   const [questions, setQuestions] = useState([]);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [answer, setAnswer] = useState('');
+  const [questionStartedAt, setQuestionStartedAt] = useState(null); // per-question timing
+  const [violationThresholds, setViolationThresholds] = useState(null); // recruiter-set limits
   const [interviewStarted, setInterviewStarted] = useState(false);
   const [interviewCompleted, setInterviewCompleted] = useState(false);
   const [results, setResults] = useState(null);
@@ -74,11 +79,18 @@ const AIInterview = () => {
     error: mediapipeError,
     loading: mediapipeLoading,
     isAnalyzing: metricsAnalyzing,
+    pauseRef: mediapipePauseRef,
     startWebcam: startMediaPipeWebcam,
     stopWebcam: stopMediaPipeWebcam,
     analyzeFrame,
     detectFaces
   } = useMediaPipeJS();
+
+  // Violation alert modal state
+  const [violationAlertVisible, setViolationAlertVisible] = useState(false);
+  const [violationAlertTitle, setViolationAlertTitle] = useState('');
+  const [violationAlertMsg, setViolationAlertMsg] = useState('');
+  const violationAlertActiveRef = useRef(false);
 
   // Use MediaPipe's videoRef so it's connected to the actual DOM element
   // This ensures the hook can access the video stream for face detection
@@ -149,8 +161,11 @@ const AIInterview = () => {
   };
 
   // Load face detection model on component mount with retry logic
+  // NOTE: BlazeFace is NO LONGER loaded on mount. Assessment face detection uses MediaPipe
+  // (loaded by useMediaPipeJS hook). Loading BlazeFace + TensorFlow.js was competing with
+  // MediaPipe for WebGL GPU resources, causing both to fail or stall.
   useEffect(() => {
-    loadFaceDetectionModel();
+    // loadFaceDetectionModel(); // DISABLED — MediaPipe handles face detection now
     
     // Check if there's an active interview in localStorage (page refresh)
     const activeInterviewId = localStorage.getItem('activeInterviewId');
@@ -171,6 +186,41 @@ const AIInterview = () => {
         console.log('Could not parse saved malpractices');
       }
     }
+
+    // Restore violation counts from localStorage (page refresh recovery)
+    const savedViolations = localStorage.getItem('currentViolationCounts');
+    if (savedViolations) {
+      try {
+        const v = JSON.parse(savedViolations);
+        console.log('✅ Loaded violation counts from localStorage:', v);
+        if (typeof v.noFace === 'number') {
+          noFaceCountRef.current = v.noFace;
+          setNoFaceCount(v.noFace);
+        }
+        if (typeof v.multipleFace === 'number') {
+          multipleFaceCountRef.current = v.multipleFace;
+          setMultipleFaceCount(v.multipleFace);
+        }
+        if (typeof v.lookingAway === 'number') {
+          lookingAwayCountRef.current = v.lookingAway;
+          setLookingAwayCount(v.lookingAway);
+        }
+      } catch (e) {
+        console.log('Could not parse saved violation counts');
+      }
+    }
+
+    // Restore violation thresholds from localStorage (page refresh recovery)
+    const savedThresholds = localStorage.getItem('violationThresholds');
+    if (savedThresholds) {
+      try {
+        const t = JSON.parse(savedThresholds);
+        setViolationThresholds(t);
+        console.log('✅ Loaded violation thresholds from localStorage:', t);
+      } catch (e) {
+        console.log('Could not parse saved violation thresholds');
+      }
+    }
   }, []);
 
   // Load interview details if coming from accepted application
@@ -180,51 +230,10 @@ const AIInterview = () => {
     }
   }, [acceptedInterviewId]);
 
-  // Start webcam if interview is already in progress (page refresh case)
-  useEffect(() => {
-    if (interviewStarted && !interviewCompleted && !webcamActive) {
-      console.log('🔄 Interview already started, waiting for model and initializing webcam...');
-      
-      const initWebcam = async () => {
-        // Wait for face detection model to load
-        if (!faceDetectionModel) {
-          console.log('⏳ Waiting for face detection model to load...');
-          await new Promise((resolve) => {
-            const checkInterval = setInterval(() => {
-              if (faceDetectionModel) {
-                console.log('✅ Model loaded during refresh');
-                clearInterval(checkInterval);
-                resolve();
-              }
-            }, 100);
-            
-            // Timeout after 10 seconds
-            setTimeout(() => {
-              console.warn('⚠️ Model loading timeout during refresh');
-              clearInterval(checkInterval);
-              resolve();
-            }, 10000);
-          });
-        } else {
-          console.log('✅ Model already loaded during refresh');
-        }
-        
-        // Now start webcam
-        try {
-          await startWebcam();
-          console.log('✅ Webcam started successfully after refresh');
-        } catch (err) {
-          console.error('❌ Webcam initialization error after refresh:', err);
-        }
-      };
-      
-      const timer = setTimeout(() => {
-        initWebcam();
-      }, 500);
-      
-      return () => clearTimeout(timer);
-    }
-  }, [interviewStarted, interviewCompleted, webcamActive, faceDetectionModel]);
+  // NOTE: Webcam startup for both fresh-start and page-refresh is handled by
+  // the single "Ensure MediaPipe detection" useEffect below (line ~294).
+  // We intentionally removed the duplicate "refresh" webcam effect to avoid
+  // race conditions (multiple getUserMedia calls, stale closures on faceDetectionModel).
 
   // Persist malpractices to localStorage whenever they change
   useEffect(() => {
@@ -233,6 +242,19 @@ const AIInterview = () => {
       console.log('💾 Saved malpractices to localStorage:', malpractices);
     }
   }, [malpractices, interviewStarted, interviewCompleted]);
+
+  // Persist violation counts to localStorage whenever they change
+  useEffect(() => {
+    if (interviewStarted && !interviewCompleted) {
+      const counts = {
+        noFace: noFaceCount,
+        multipleFace: multipleFaceCount,
+        lookingAway: lookingAwayCount
+      };
+      localStorage.setItem('currentViolationCounts', JSON.stringify(counts));
+      console.log('💾 Saved violation counts to localStorage:', counts);
+    }
+  }, [noFaceCount, multipleFaceCount, lookingAwayCount, interviewStarted, interviewCompleted]);
 
   // Detect tab switching
   useEffect(() => {
@@ -260,7 +282,7 @@ const AIInterview = () => {
         if (prevTime <= 1) {
           // Time's up - auto-submit interview
           clearInterval(timerInterval);
-          alert('⏰ Time\'s up! Your interview will be submitted automatically.');
+          alert('⏰ Time\'s up! Your assessment will be submitted automatically.');
           completeInterview();
           return 0;
         }
@@ -287,134 +309,200 @@ const AIInterview = () => {
     return () => clearInterval(timerInterval);
   }, [interviewStarted, interviewCompleted, remainingTime, timerWarningShown]);
 
-  // Ensure MediaPipe detection and webcam start properly when interview begins
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SINGLE consolidated webcam effect — handles BOTH start and stop.
+  // Having separate effects caused race conditions where one stopped what the
+  // other just started.
+  // ═══════════════════════════════════════════════════════════════════════════
   useEffect(() => {
+    // STOP path: interview not started or completed
     if (!interviewStarted || interviewCompleted) {
-      // Interview not started yet, or interview is done
-      return;
-    }
-
-    console.log('📱 Starting MediaPipe webcam detection for interview...');
-    
-    const startDetection = async () => {
-      try {
-        // Give UI time to render video element
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
-        // Call hook's startWebcam to attach stream to video element
-        await startMediaPipeWebcam();
-        console.log('✅ MediaPipe webcam detection started');
-        setWebcamActive(true);
-      } catch (err) {
-        console.error('❌ Error starting webcam detection:', err);
-        console.warn('⚠️ Webcam detection failed, but interview may continue');
-        setWebcamActive(false);
-      }
-    };
-
-    startDetection();
-  }, [interviewStarted, startMediaPipeWebcam]);
-
-  // MediaPipe face analysis: Start when interview begins
-  useEffect(() => {
-    if (!interviewStarted || interviewCompleted) {
-      // Clean up when not in interview
+      console.log('📹 Webcam effect: interview not active, ensuring cleanup.', 
+        { interviewStarted, interviewCompleted });
       if (pythonFrameIntervalRef.current) {
         clearInterval(pythonFrameIntervalRef.current);
         pythonFrameIntervalRef.current = null;
       }
       stopMediaPipeWebcam();
+      setWebcamActive(false);
       return;
     }
 
-    // Face detection is already running in useMediaPipeJS hook
-    // We don't need to call detectFaces() here - it's already using requestAnimationFrame
-    console.log('📹 Interview started - face detection should be active in background');
+    // START path: interview is active
+    console.log('📱 Webcam effect: interview is active, starting webcam + detection...');
+    let cancelled = false;
 
+    const startDetection = async () => {
+      try {
+        // Give React time to render the <video> element
+        await new Promise(resolve => setTimeout(resolve, 800));
+        if (cancelled) return;
+
+        console.log('🎥 Calling startMediaPipeWebcam()...');
+        await startMediaPipeWebcam();
+        if (cancelled) return;
+
+        console.log('✅ MediaPipe webcam started successfully');
+        setWebcamActive(true);
+      } catch (err) {
+        console.error('❌ Error starting webcam detection:', err);
+        if (!cancelled) setWebcamActive(false);
+      }
+    };
+
+    startDetection();
+
+    // Cleanup: stop everything when effect re-runs or component unmounts
     return () => {
+      cancelled = true;
       if (pythonFrameIntervalRef.current) {
         clearInterval(pythonFrameIntervalRef.current);
         pythonFrameIntervalRef.current = null;
       }
     };
-  }, [interviewStarted, interviewCompleted, stopMediaPipeWebcam]);
+  }, [interviewStarted, interviewCompleted, startMediaPipeWebcam, stopMediaPipeWebcam]);
+
+  // Helper: show violation alert modal, beep, and pause detection until user clicks OK
+  const showViolationModal = (title, msg, violationType) => {
+    if (violationAlertActiveRef.current) return; // already showing an alert
+    violationAlertActiveRef.current = true;
+
+    // Pause the MediaPipe detection loop
+    if (mediapipePauseRef) mediapipePauseRef.current = true;
+
+    // Play beep
+    try { playWarningSound(); } catch (e) { /* ignore */ }
+
+    // Set modal content
+    setViolationAlertTitle(title);
+    setViolationAlertMsg(msg);
+    setViolationAlertVisible(true);
+
+    // Log warning to malpractices
+    setMalpractices(prev => ({
+      ...prev,
+      warnings: [...prev.warnings, `🚨 [${new Date().toLocaleTimeString()}] ${title}: ${msg}`]
+    }));
+  };
+
+  // User clicks OK on violation alert — resume detection
+  const handleViolationAlertOk = () => {
+    setViolationAlertVisible(false);
+    violationAlertActiveRef.current = false;
+
+    // Resume detection
+    if (mediapipePauseRef) mediapipePauseRef.current = false;
+  };
 
   // Update faceMetrics from MediaPipe - this syncs hook metrics to component state
   // and tracks malpractice violations (no face, multiple faces, looking away)
+  // Also checks violation thresholds for auto-termination
+  const terminatingRef = useRef(false); // prevent double-termination
+  
+  const checkViolationThreshold = (type, currentCount) => {
+    if (!violationThresholds || terminatingRef.current) return;
+    const limit = violationThresholds[type] || 0;
+    if (limit > 0 && currentCount >= limit) {
+      terminatingRef.current = true;
+      const typeLabels = {
+        noFace: 'No Face Detected',
+        multipleFace: 'Multiple Faces',
+        lookingAway: 'Looking Away',
+        tabSwitch: 'Tab Switches',
+        voiceChange: 'Voice Changes',
+        aiAnswer: 'AI-Generated Answers'
+      };
+      const reason = `${typeLabels[type] || type} limit exceeded (${currentCount}/${limit})`;
+      console.log(`🚫 AUTO-TERMINATE: ${reason}`);
+      
+      // Close any open violation modal first
+      setViolationAlertVisible(false);
+      violationAlertActiveRef.current = false;
+      
+      // Show termination alert and complete
+      setTimeout(() => {
+        alert(`🚫 INTERVIEW TERMINATED\n\nReason: ${reason}\n\nYour interview has been automatically terminated due to exceeding the allowed violation limit set by the recruiter.`);
+        completeInterviewWithTermination(reason);
+      }, 300);
+    }
+  };
+
   useEffect(() => {
     if (mediapipeFaceMetrics) {
-      console.log('📊 Face metrics updated:', {
-        face_detected: mediapipeFaceMetrics.face_detected,
-        face_count: mediapipeFaceMetrics.face_count,
-        head_pose: mediapipeFaceMetrics.head_pose,
-        eye_metrics: mediapipeFaceMetrics.eye_metrics,
-        violations: mediapipeFaceMetrics.violations
-      });
       setFaceMetrics(mediapipeFaceMetrics);
 
       // Sync faceCount from MediaPipe metrics so the UI status overlay updates
       const detectedCount = mediapipeFaceMetrics.face_count ?? (mediapipeFaceMetrics.face_detected ? 1 : 0);
       setFaceCount(detectedCount);
 
-      // --- Malpractice violation tracking from MediaPipe metrics ---
-      const now = Date.now();
-      const WARNING_THROTTLE_MS = 3000; // Only add a warning every 3 seconds per violation type
-
-      // Helper: add warning to malpractice state (throttled)
-      const addThrottledWarning = (type, message) => {
-        const last = lastMalpracticeWarningRef.current;
-        if (last.type !== type || (now - last.time) > WARNING_THROTTLE_MS) {
-          lastMalpracticeWarningRef.current = { type, time: now };
-          setMalpractices(prev => ({
-            ...prev,
-            warnings: [...prev.warnings, message]
-          }));
-        }
-      };
+      // Skip violation tracking while an alert is already showing
+      if (violationAlertActiveRef.current) return;
 
       // 1) No face detected
       if (!mediapipeFaceMetrics.face_detected || detectedCount === 0) {
         noFaceCountRef.current += 1;
         setNoFaceCount(noFaceCountRef.current);
-        console.log(`📊 No Face Count INCREMENTED to: ${noFaceCountRef.current} (Total Violations)`);
+        console.log(`📊 No Face Count INCREMENTED to: ${noFaceCountRef.current}`);
 
-        addThrottledWarning('NO_FACE',
-          `🚨 [${new Date().toLocaleTimeString()}] NO FACE DETECTED! Please ensure you are visible on camera.`
+        // Check threshold for auto-termination
+        checkViolationThreshold('noFace', noFaceCountRef.current);
+
+        showViolationModal(
+          'NO FACE DETECTED',
+          'Please position yourself in front of the camera. Detection is paused until you click OK.',
+          'NO_FACE'
         );
-
-        if (noFaceCountRef.current % 5 === 0) {
-          try { playWarningSound(); } catch (e) { /* ignore */ }
-        }
       }
       // 2) Multiple faces detected
       else if (detectedCount > 1) {
         multipleFaceCountRef.current += 1;
         setMultipleFaceCount(multipleFaceCountRef.current);
-        console.log(`📊 Multiple Face Count INCREMENTED to: ${multipleFaceCountRef.current} (Total Violations)`);
+        console.log(`📊 Multiple Face Count INCREMENTED to: ${multipleFaceCountRef.current}`);
 
-        addThrottledWarning('MULTIPLE_FACES',
-          `🚨 [${new Date().toLocaleTimeString()}] MULTIPLE FACES DETECTED (${detectedCount})! Only the candidate should be visible.`
+        // Check threshold for auto-termination
+        checkViolationThreshold('multipleFace', multipleFaceCountRef.current);
+
+        showViolationModal(
+          'MULTIPLE FACES DETECTED',
+          `${detectedCount} faces found! Only you should be visible on camera. Detection is paused until you click OK.`,
+          'MULTIPLE_FACES'
         );
-
-        if (multipleFaceCountRef.current % 5 === 0) {
-          try { playWarningSound(); } catch (e) { /* ignore */ }
-        }
       }
-      // 3) Looking away (gaze not center) — only when exactly one face is detected
+      // 3) Looking away — only when exactly one face is detected
+      // Uses BOTH iris gaze direction AND head pose yaw/pitch for robust detection
       else if (detectedCount === 1) {
         const gazeDir = mediapipeFaceMetrics.eye_metrics?.gaze_direction;
-        if (gazeDir && gazeDir !== 'center') {
+        const headYaw = mediapipeFaceMetrics.head_pose?.yaw ?? 0;
+        const headPitch = mediapipeFaceMetrics.head_pose?.pitch ?? 0;
+        const hookViolations = mediapipeFaceMetrics.violations || [];
+
+        // Detect looking away via:
+        //  a) iris gaze is off-center
+        //  b) head is turned significantly (yaw > 20° or pitch > 15°)
+        //  c) the hook itself flagged a "Looking Away" violation
+        const gazeAway = gazeDir && gazeDir !== 'center';
+        const headAway = Math.abs(headYaw) > 20 || Math.abs(headPitch) > 15;
+        const hookAway = hookViolations.some(v => typeof v === 'string' && v.toLowerCase().includes('looking away'));
+
+        if (gazeAway || headAway || hookAway) {
+          const reason = gazeAway
+            ? `eyes looking ${gazeDir}`
+            : headAway
+              ? `head turned (yaw: ${Math.round(headYaw)}°, pitch: ${Math.round(headPitch)}°)`
+              : 'looking away from screen';
+
           lookingAwayCountRef.current += 1;
           setLookingAwayCount(lookingAwayCountRef.current);
-          console.log(`📊 Looking Away Count INCREMENTED to: ${lookingAwayCountRef.current} (gaze: ${gazeDir})`);
+          console.log(`📊 Looking Away Count INCREMENTED to: ${lookingAwayCountRef.current} (${reason})`);
 
-          addThrottledWarning('LOOKING_AWAY',
-            `👀 [${new Date().toLocaleTimeString()}] LOOKING AWAY (${gazeDir})! Please keep your eyes on the screen.`
+          // Check threshold for auto-termination
+          checkViolationThreshold('lookingAway', lookingAwayCountRef.current);
+
+          showViolationModal(
+            'LOOKING AWAY DETECTED',
+            `Detected: ${reason}. Please keep your eyes on the screen. Detection is paused until you click OK.`,
+            'LOOKING_AWAY'
           );
-
-          if (lookingAwayCountRef.current % 10 === 0) {
-            try { playWarningSound(); } catch (e) { /* ignore */ }
-          }
         }
       }
     }
@@ -737,77 +825,33 @@ const AIInterview = () => {
             console.error('Face detection report failed:', err.message);
           });
 
-          // Client-side warnings with enhanced violation tracking
-          if (stableFaceCount !== 1) {
-            let warningMessage = '';
-            let violationType = null;
-            
+          // Client-side violation tracking (skip if a violation modal is already showing)
+          if (!violationAlertActiveRef.current && stableFaceCount !== 1) {
             if (stableFaceCount === 0) {
-              violationType = 'NO_FACE';
-              warningMessage = `🚨 [${new Date().toLocaleTimeString()}] NO FACE DETECTED! Please ensure you are visible on camera.`;
-              console.warn('🚨 VIOLATION: No face detected!');
-              
-              // Track consecutive no-face violations - CUMULATIVE (never decreases)
+              console.warn('🚨 VIOLATION (BlazeFace): No face detected!');
+              showViolationModal(
+                'NO FACE DETECTED',
+                'Please position yourself in front of the camera. Detection is paused until you click OK.',
+                'NO_FACE'
+              );
+              // Increment counter once per alert
               noFaceCountRef.current += 1;
-              setNoFaceCount(prev => Math.max(prev + 1, noFaceCountRef.current));
-              console.log(`📊 No Face Count INCREMENTED to: ${noFaceCountRef.current} (Total Violations)`);
-              
-              // Play warning sound
-              try {
-                playWarningSound();
-              } catch (err) {
-                console.log('Warning sound error:', err.message);
-              }
-              
-              // Show visual alert for severe violations (every 3rd violation to avoid spam)
-              if (noFaceCountRef.current % 3 === 0) {
-                try {
-                  showViolationAlert('NO FACE DETECTED', 'Please ensure your face is visible to the camera immediately!');
-                } catch (err) {
-                  console.log('Alert error:', err.message);
-                }
-              }
+              setNoFaceCount(noFaceCountRef.current);
+              setLastViolationType('NO_FACE');
             } else if (stableFaceCount > 1) {
-              violationType = 'MULTIPLE_FACES';
-              warningMessage = `🚨 [${new Date().toLocaleTimeString()}] MULTIPLE FACES DETECTED (${stableFaceCount})! Only the candidate should be visible.`;
-              console.warn('🚨 VIOLATION: Multiple faces detected!');
-              
-              // Track multiple face violations - CUMULATIVE (never decreases)
+              console.warn('🚨 VIOLATION (BlazeFace): Multiple faces detected!');
+              showViolationModal(
+                'MULTIPLE FACES DETECTED',
+                `${stableFaceCount} faces found! Only you should be visible on camera. Detection is paused until you click OK.`,
+                'MULTIPLE_FACES'
+              );
               multipleFaceCountRef.current += 1;
-              setMultipleFaceCount(prev => Math.max(prev + 1, multipleFaceCountRef.current));
-              console.log(`📊 Multiple Face Count INCREMENTED to: ${multipleFaceCountRef.current} (Total Violations)`);
-              
-              // Play warning sound
-              try {
-                playWarningSound();
-              } catch (err) {
-                console.log('Warning sound error:', err.message);
-              }
-              
-              // Show visual alert for severe violations (every 3rd violation to avoid spam)
-              if (multipleFaceCountRef.current % 3 === 0) {
-                try {
-                  showViolationAlert('MULTIPLE FACES DETECTED', `${stableFaceCount} faces detected. Only you should be visible!`);
-                } catch (err) {
-                  console.log('Alert error:', err.message);
-                }
-              }
+              setMultipleFaceCount(multipleFaceCountRef.current);
+              setLastViolationType('MULTIPLE_FACES');
             }
-
-            if (warningMessage && violationType !== lastViolationType) {
-              setMalpractices(prev => ({
-                ...prev,
-                warnings: [...prev.warnings, warningMessage]
-              }));
-              setLastViolationType(violationType);
-            }
-          } else {
-            // ✅ Face detected properly - ONLY clear violation type flag
-            // 🔒 IMPORTANT: Cumulative counters (noFaceCountRef, multipleFaceCountRef) are NEVER reset
-            // They track TOTAL violations throughout the ENTIRE interview
+          } else if (stableFaceCount === 1) {
             if (lastViolationType !== null) {
               console.log('✅ Face properly detected again - violation cleared');
-              console.log(`🔒 COUNTERS PRESERVED (NEVER RESET) - No Face Total: ${noFaceCountRef.current}, Multiple Face Total: ${multipleFaceCountRef.current}`);
               setLastViolationType(null);
             }
           }
@@ -1305,7 +1349,7 @@ const AIInterview = () => {
       const interview = response.data;
       
       if (interview.applicationStatus !== 'accepted') {
-        alert('This interview has not been accepted by the recruiter yet.');
+        alert('This job has not been accepted by the recruiter yet.');
         navigate('/candidate/dashboard');
         return;
       }
@@ -1313,9 +1357,9 @@ const AIInterview = () => {
       // Check if interview was auto-completed due to time expiration
       if (interview.status === 'completed') {
         if (interview.autoSubmitted) {
-          alert('⏰ This interview was automatically submitted due to time limit expiration.');
+          alert('⏰ This assessment was automatically submitted due to time limit expiration.');
         } else {
-          alert('This interview has already been completed.');
+          alert('This assessment has already been completed.');
         }
         localStorage.removeItem('activeInterviewId');
         navigate('/candidate/dashboard');
@@ -1331,10 +1375,20 @@ const AIInterview = () => {
         setQuestions(interview.questions || []);
         setInterviewStarted(true);
         setCurrentQuestionIndex(interview.currentQuestionIndex || 0);
+        setQuestionStartedAt(new Date().toISOString()); // start timing current question on resume
         
         // Set time limit from interview data
         const timeLimitMinutes = interview.timeLimit || 30;
         setTimeLimit(timeLimitMinutes);
+
+        // Restore violation thresholds from localStorage or interview data
+        const savedThresholds = localStorage.getItem('violationThresholds');
+        if (savedThresholds) {
+          try {
+            setViolationThresholds(JSON.parse(savedThresholds));
+            console.log('🛡️ Restored violation thresholds from localStorage');
+          } catch (e) { /* ignore */ }
+        }
         // Calculate remaining time (if interview has a start time, calculate elapsed time)
         if (interview.startTime || interview.startedAt) {
           const startTime = new Date(interview.startTime || interview.startedAt);
@@ -1350,20 +1404,35 @@ const AIInterview = () => {
         
         console.log('✅ Interview resumed - MediaPipe hook will handle webcam');
         
-        alert(`✅ Resuming interview! Stream: ${interview.stream}, Difficulty: ${interview.difficulty}.`);
+        // NOTE: No alert() here — alert blocks the JS event loop and prevents React
+        // from rendering the video element, which prevents the webcam from starting.
+        console.log(`✅ Resuming assessment! Stream: ${interview.stream}, Difficulty: ${interview.difficulty}.`);
         return;
       }
       
+      // Check if identity verification is required
+      if (interview.identityVerificationRequired && !interview.identityVerificationCompleted) {
+        setNeedsIdentityVerification(true);
+        setIdentityVerified(false);
+        console.log('🔐 Identity verification required before starting assessment');
+      } else {
+        setNeedsIdentityVerification(false);
+        setIdentityVerified(true);
+      }
+
       // Pre-set stream and difficulty from the recruiter's interview
       setStream(interview.stream);
       setDifficulty(interview.difficulty);
       setInterviewId(id);
       setIsFromAcceptedApplication(true);
       
-      alert(`✅ Interview loaded! Stream: ${interview.stream}, Difficulty: ${interview.difficulty}. Click "Start Interview" to begin.`);
+      const verificationNote = (interview.identityVerificationRequired && !interview.identityVerificationCompleted) 
+        ? ' Please complete identity verification first.' 
+        : '';
+      alert(`✅ Job loaded! Stream: ${interview.stream}, Difficulty: ${interview.difficulty}.${verificationNote} Click "Start Assessment" to begin.`);
     } catch (error) {
       console.error('Error loading interview:', error);
-      alert('Failed to load interview. Please try again.');
+      alert('Failed to load job. Please try again.');
       navigate('/candidate/dashboard');
     } finally {
       setLoadingInterview(false);
@@ -1374,65 +1443,12 @@ const AIInterview = () => {
     try {
       setLoading(true);
       
-      // WAIT FOR MODEL TO LOAD (with automatic retry and fallback)
-      console.log('⏳ Ensuring face detection model is loaded...');
-      
-      if (!faceDetectionModel) {
-        console.log('⏳ Model not loaded yet, attempting to reload...');
-        setModelLoading(true);
-        
-        // Try loading the model with more attempts
-        let modelLoaded = false;
-        const maxAttempts = 5;
-        
-        for (let i = 0; i < maxAttempts && !modelLoaded; i++) {
-          try {
-            console.log(`🔄 Loading attempt ${i + 1}/${maxAttempts}...`);
-            await tf.ready();
-            const model = await blazeface.load({
-              maxFaces: 10,
-              iouThreshold: 0.3,
-              scoreThreshold: 0.75
-            });
-            setFaceDetectionModel(model);
-            modelLoaded = true;
-            console.log('✅ Model loaded successfully!');
-            setModelLoading(false);
-          } catch (loadError) {
-            console.warn(`⚠️ Load attempt ${i + 1} failed:`, loadError);
-            if (i < maxAttempts - 1) {
-              await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2s between attempts
-            }
-          }
-        }
-        
-        if (!modelLoaded) {
-          setModelLoading(false);
-          console.warn('⚠️ Face detection model could not be loaded after multiple attempts');
-          
-          // Ask user if they want to proceed without face detection
-          const proceed = window.confirm(
-            '⚠️ Face detection model failed to load.\n\n' +
-            'This may be due to:\n' +
-            '• Slow internet connection\n' +
-            '• Browser compatibility issues\n' +
-            '• Firewall/network restrictions\n\n' +
-            'Do you want to proceed WITHOUT face detection?\n' +
-            '(Interview will continue but face monitoring may be limited)'
-          );
-          
-          if (!proceed) {
-            setLoading(false);
-            return;
-          }
-          
-          console.log('⚠️ Proceeding without face detection model');
-        }
-      } else {
-        console.log('✅ Model already loaded');
-      }
-      
-      console.log('✅ Model ready, preparing interview UI...');
+      // NOTE: Face detection during assessment is handled by MediaPipe (useMediaPipeJS hook),
+      // NOT by BlazeFace. MediaPipe models load on component mount independently.
+      // We no longer block here waiting for BlazeFace — it was causing 30+ second stalls.
+      console.log('🚀 Starting assessment (MediaPipe handles face detection)...');
+      console.log('   - MediaPipe loading:', mediapipeLoading);
+      console.log('   - MediaPipe error:', mediapipeError);
       
       // Pre-fetch interview data FIRST (before starting webcam)
       const requestBody = isFromAcceptedApplication 
@@ -1450,6 +1466,13 @@ const AIInterview = () => {
       setTimeLimit(timeLimitMinutes);
       setRemainingTime(timeLimitMinutes * 60); // Convert to seconds
       
+      // Store violation thresholds from recruiter settings
+      if (response.data.violationThresholds) {
+        setViolationThresholds(response.data.violationThresholds);
+        localStorage.setItem('violationThresholds', JSON.stringify(response.data.violationThresholds));
+        console.log('🛡️ Violation thresholds set:', response.data.violationThresholds);
+      }
+      
       console.log(`⏱️ Interview timer set: ${timeLimitMinutes} minutes (${questionCount} questions)`);
       
       // Save interview ID to localStorage for page refresh recovery
@@ -1458,28 +1481,27 @@ const AIInterview = () => {
       // Set interview started to TRUE first, so video element gets rendered
       setInterviewStarted(true);
       setCurrentQuestionIndex(0);
+      setQuestionStartedAt(new Date().toISOString()); // start timing first question
       
-      // The useMediaPipeJS hook will automatically start webcam when interviewStarted is true
-      // Wait for video and detection to be ready
-      console.log('🎥 Interview started - MediaPipe hook will handle webcam...');
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // The useMediaPipeJS hook will start webcam via the useEffect that watches interviewStarted.
+      // Don't block here waiting for the webcam — it starts asynchronously after the video
+      // element renders. Blocking with a fixed timeout caused race conditions.
+      console.log('🎥 Interview started - MediaPipe hook will handle webcam setup asynchronously');
       
-      // Verify webcam started (check if video has stream)
-      if (!videoRef.current?.srcObject) {
-        throw new Error('Webcam failed to start - video element has no stream');
-      }
-      
-      // Automatically read the first question
+      // Automatically read the first question (after a short delay for UI to be ready)
       if (response.data.questions.length > 0) {
         setTimeout(() => {
           speakQuestion(response.data.questions[0].question);
-        }, 500); // Small delay to ensure UI is ready
+        }, 1500); // Delay to allow webcam + UI to initialize
       }
       
-      alert('✅ Interview started! Questions have been generated based on your stream.');
+      // NOTE: Using console.log instead of alert() to avoid blocking the event loop.
+      // alert() freezes the entire JS thread, preventing React from rendering the video
+      // element and webcam effects from firing. This was causing the camera to not start.
+      console.log('✅ Assessment started! Questions have been generated.');
     } catch (error) {
       console.error('Start interview error:', error.response || error);
-      alert('❌ Error starting interview: ' + (error.response?.data?.message || error.message));
+      alert('❌ Error starting assessment: ' + (error.response?.data?.message || error.message));
     } finally {
       setLoading(false);
     }
@@ -1501,7 +1523,8 @@ const AIInterview = () => {
       const response = await api.post('/interview/submit-answer', {
         interviewId,
         questionIndex: currentQuestionIndex,
-        answer
+        answer,
+        questionStartedAt: questionStartedAt || new Date().toISOString()
       });
 
       const aiDetection = response.data.aiDetection;
@@ -1525,19 +1548,20 @@ const AIInterview = () => {
       if (currentQuestionIndex < questions.length - 1) {
         const nextIndex = currentQuestionIndex + 1;
         setCurrentQuestionIndex(nextIndex);
+        setQuestionStartedAt(new Date().toISOString()); // start timing next question
         
         // Automatically read the next question
         setTimeout(() => {
           speakQuestion(questions[nextIndex].question);
         }, 500);
       } else {
-        alert('All questions answered! Click "Complete Interview" to finish.');
+        alert('All questions answered! Click "Complete Assessment" to finish.');
       }
 
     } catch (error) {
       // Check if time expired
       if (error.response?.data?.timeExpired) {
-        alert('⏰ Time limit exceeded! Your interview will be auto-submitted now.');
+        alert('⏰ Time limit exceeded! Your assessment will be auto-submitted now.');
         completeInterview();
         return;
       }
@@ -1562,6 +1586,14 @@ const AIInterview = () => {
       }));
 
       console.log(warning);
+
+      // Check if backend terminated the interview due to threshold
+      if (response.data.terminated) {
+        alert(`🚫 INTERVIEW TERMINATED\n\nReason: ${response.data.terminationReason}\n\nYour interview has been automatically terminated due to exceeding the allowed violation limit set by the recruiter.`);
+        completeInterviewWithTermination(response.data.terminationReason);
+        return;
+      }
+
       if (response.data.warning) {
         alert(response.data.warning);
       }
@@ -1652,7 +1684,8 @@ const AIInterview = () => {
       interviewId,
       questionIndex: currentQuestionIndex,
       answer: '[SKIPPED]', // Mark as skipped
-      skipped: true // Flag to indicate this was skipped
+      skipped: true, // Flag to indicate this was skipped
+      questionStartedAt: questionStartedAt || new Date().toISOString()
     });
 
     // Clear current answer
@@ -1671,7 +1704,7 @@ const AIInterview = () => {
       
       alert('⏭️ Question skipped. Moving to next question.');
     } else {
-      alert('⏭️ Last question skipped. Click "Complete Interview" to finish.');
+      alert('⏭️ Last question skipped. Click "Complete Assessment" to finish.');
     }
 
   } catch (error) {
@@ -1704,6 +1737,7 @@ const previousQuestion = () => {
     // Move to previous question
     const prevIndex = currentQuestionIndex - 1;
     setCurrentQuestionIndex(prevIndex);
+    setQuestionStartedAt(new Date().toISOString()); // start timing previous question
     
     // Clear current answer (or you can keep it if you want)
     setAnswer('');
@@ -1739,22 +1773,71 @@ const previousQuestion = () => {
       
       // Clear active interview from localStorage
       localStorage.removeItem('activeInterviewId');
+      localStorage.removeItem('currentMalpractices');
+      localStorage.removeItem('currentViolationCounts');
+      localStorage.removeItem('violationThresholds');
       
       const response = await api.post('/interview/complete', {
-        interviewId
+        interviewId,
+        violationCounts: {
+          noFaceCount: noFaceCountRef.current,
+          multipleFaceCount: multipleFaceCountRef.current,
+          lookingAwayCount: lookingAwayCountRef.current
+        }
       });
 
       setResults(response.data);
       setInterviewCompleted(true);
       
-      alert(`🏁 Interview Completed!\nScore: ${response.data.score}/100\nStatus: ${response.data.status}\n\n📊 Viewing your detailed report...`);
+      alert(`🏁 Assessment Completed!\nScore: ${response.data.score}/100\nStatus: ${response.data.status}\n\n📊 Viewing your detailed report...`);
       
       // Navigate to report page after a short delay
       setTimeout(() => {
         navigate(`/interview/${interviewId}/report`);
       }, 1500);
     } catch (error) {
-      alert('❌ Error completing interview: ' + (error.response?.data?.message || error.message));
+      alert('❌ Error completing assessment: ' + (error.response?.data?.message || error.message));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Auto-terminate interview due to violation threshold exceeded
+  const completeInterviewWithTermination = async (reason) => {
+    try {
+      setLoading(true);
+      
+      console.log(`🚫 Interview TERMINATED — ${reason}`);
+      stopWebcam();
+      stopListening();
+      stopSpeaking();
+      
+      localStorage.removeItem('activeInterviewId');
+      localStorage.removeItem('currentMalpractices');
+      localStorage.removeItem('currentViolationCounts');
+      localStorage.removeItem('violationThresholds');
+      
+      const response = await api.post('/interview/complete', {
+        interviewId,
+        violationCounts: {
+          noFaceCount: noFaceCountRef.current,
+          multipleFaceCount: multipleFaceCountRef.current,
+          lookingAwayCount: lookingAwayCountRef.current
+        },
+        terminatedByViolation: true,
+        terminationReason: reason
+      });
+
+      setResults(response.data);
+      setInterviewCompleted(true);
+      
+      setTimeout(() => {
+        navigate(`/interview/${interviewId}/report`);
+      }, 1500);
+    } catch (error) {
+      console.error('Error during violation termination:', error);
+      // Navigate anyway
+      navigate(`/interview/${interviewId}/report`);
     } finally {
       setLoading(false);
     }
@@ -1766,8 +1849,8 @@ const previousQuestion = () => {
       const response = await api.get('/interview/stats/summary');
       
       const stats = response.data;
-      let message = `📊 Your Interview Statistics:\n\n`;
-      message += `Total Interviews: ${stats.totalInterviews}\n`;
+      let message = `📊 Your Job Statistics:\n\n`;
+      message += `Total Assessments: ${stats.totalInterviews}\n`;
       message += `Completed: ${stats.completedInterviews}\n`;
       message += `Flagged: ${stats.flaggedInterviews}\n`;
       message += `Average Score: ${stats.averageScore}/100\n\n`;
@@ -1797,12 +1880,26 @@ const previousQuestion = () => {
 
   return (
     <div className="ai-interview-container">
-      <h1>🎯 AI-Powered Interview System</h1>
+      {/* Violation Alert Modal — pauses detection until dismissed */}
+      {violationAlertVisible && (
+        <div className="violation-modal-overlay">
+          <div className="violation-modal">
+            <div className="violation-modal-icon">🚨</div>
+            <h2 className="violation-modal-title">{violationAlertTitle}</h2>
+            <p className="violation-modal-msg">{violationAlertMsg}</p>
+            <button className="violation-modal-btn" onClick={handleViolationAlertOk}>
+              OK — Resume Detection
+            </button>
+          </div>
+        </div>
+      )}
+
+      <h1>🎯 AI-Powered Job Assessment</h1>
       <p className="subtitle">With Advanced Malpractice Detection</p>
 
       {!interviewStarted && !interviewCompleted && (
         <div className="setup-section">
-          <h2>Start Your Interview</h2>
+          <h2>Start Your Assessment</h2>
 
           {loadingInterview && (
             <div style={{ 
@@ -1812,7 +1909,7 @@ const previousQuestion = () => {
               borderRadius: '8px',
               marginBottom: '20px'
             }}>
-              <p>⏳ Loading interview details...</p>
+              <p>⏳ Loading job details...</p>
             </div>
           )}
 
@@ -1826,8 +1923,48 @@ const previousQuestion = () => {
               borderRadius: '8px',
               marginBottom: '20px'
             }}>
-              <strong>✅ Accepted Interview</strong>
+              <strong>✅ Accepted Job</strong>
               <p>Stream and difficulty have been set by your recruiter</p>
+            </div>
+          )}
+
+          {/* Identity Verification Gate */}
+          {needsIdentityVerification && !identityVerified && interviewId && (
+            <div style={{ marginBottom: '20px' }}>
+              <div style={{
+                textAlign: 'center',
+                padding: '15px',
+                background: '#fff3cd',
+                color: '#856404',
+                border: '2px solid #ffc107',
+                borderRadius: '8px',
+                marginBottom: '15px'
+              }}>
+                <strong>🔐 Identity Verification Required</strong>
+                <p>Please verify your identity before starting the assessment. Your webcam will compare your face with the photo you submitted during application.</p>
+              </div>
+              <IdentityVerification 
+                interviewId={interviewId} 
+                onVerificationComplete={() => {
+                  setIdentityVerified(true);
+                  setNeedsIdentityVerification(false);
+                  console.log('✅ Identity verified — ready to start assessment');
+                }} 
+              />
+            </div>
+          )}
+
+          {identityVerified && needsIdentityVerification === false && isFromAcceptedApplication && (
+            <div style={{
+              textAlign: 'center',
+              padding: '10px',
+              background: '#d4edda',
+              color: '#155724',
+              border: '1px solid #c3e6cb',
+              borderRadius: '8px',
+              marginBottom: '15px'
+            }}>
+              <strong>✅ Identity Verified</strong>
             </div>
           )}
           
@@ -1862,9 +1999,9 @@ const previousQuestion = () => {
           <button 
             className="btn btn-primary"
             onClick={startInterview}
-            disabled={loading || loadingInterview}
+            disabled={loading || loadingInterview || (needsIdentityVerification && !identityVerified)}
           >
-            {loading ? '⏳ Starting...' : '🚀 Start Interview'}
+            {loading ? '⏳ Starting...' : (needsIdentityVerification && !identityVerified) ? '🔐 Verify Identity First' : '🚀 Start Assessment'}
           </button>
 
           {!isFromAcceptedApplication && (
@@ -1882,7 +2019,7 @@ const previousQuestion = () => {
       {interviewStarted && !interviewCompleted && (
         <div className="interview-section">
           <div className="interview-header">
-            <h2>📝 Interview in Progress</h2>
+            <h2>📝 Assessment in Progress</h2>
             <div className="interview-info">
               <span className="badge">Stream: {stream}</span>
               <span className="badge">Difficulty: {difficulty}</span>
@@ -1899,9 +2036,9 @@ const previousQuestion = () => {
                 </span>
               )}
               
-              {/* 🆕 MODEL STATUS BADGE */}
-              <span className={`badge ${faceDetectionModel ? 'badge-success' : 'badge-warning'}`}>
-                {faceDetectionModel ? '✅ AI Model Ready' : '⏳ Loading AI Model...'}
+              {/* 🆕 MODEL STATUS BADGE - Shows MediaPipe state (actual detection engine) */}
+              <span className={`badge ${!mediapipeLoading ? 'badge-success' : 'badge-warning'}`}>
+                {!mediapipeLoading ? '✅ AI Model Ready' : '⏳ Loading AI Model...'}
               </span>
               
               {/* 🆕 WEBCAM STATUS BADGE */}
@@ -2203,7 +2340,7 @@ const previousQuestion = () => {
                 onClick={completeInterview}
                 disabled={loading}
               >
-                {loading ? '⏳ Processing...' : '🏁 Complete Interview'}
+                {loading ? '⏳ Processing...' : '🏁 Complete Assessment'}
               </button>
             </div>
           </div>
@@ -2214,7 +2351,7 @@ const previousQuestion = () => {
 
       {interviewCompleted && results && (
         <div className="results-section">
-          <h2>🎉 Interview Completed!</h2>
+          <h2>🎉 Assessment Completed!</h2>
           
           <div className="results-card">
             <div className="score-display">
@@ -2260,7 +2397,7 @@ const previousQuestion = () => {
 
             {results.flagged && (
               <div className="flagged-notice">
-                🚩 This interview has been flagged due to multiple high-severity malpractices.
+                🚩 This assessment has been flagged due to multiple high-severity malpractices.
                 A recruiter will review it.
               </div>
             )}
@@ -2289,7 +2426,7 @@ const previousQuestion = () => {
                 console.log('🔄 Face violation counters reset for new interview');
               }}
             >
-              🔄 Start New Interview
+              🔄 Start New Assessment
             </button>
             <button 
               className="btn btn-secondary"
@@ -2310,7 +2447,7 @@ const previousQuestion = () => {
           <li>✅ Voice analysis for multiple speakers</li>
           <li>✅ Face detection monitoring</li>
           <li>✅ Automated scoring with penalty system</li>
-          <li>✅ Interview flagging for suspicious behavior</li>
+          <li>✅ Assessment flagging for suspicious behavior</li>
         </ul>
       </div>
     </div>

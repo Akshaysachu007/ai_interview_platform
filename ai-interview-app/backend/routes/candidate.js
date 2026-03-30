@@ -178,6 +178,7 @@ router.get('/interviews/available', auth, async (req, res) => {
     }
 
     const interviews = await Interview.find(query)
+      .select('-atsScore -applicationScores -candidateApplicationPhoto -resumeText')
       .populate('recruiterId', 'name email company')
       .sort({ createdAt: -1 });
 
@@ -192,6 +193,7 @@ router.get('/interviews/available', auth, async (req, res) => {
 router.post('/interviews/:interviewId/apply', auth, async (req, res) => {
   try {
     const { interviewId } = req.params;
+    const { candidatePhoto } = req.body; // Optional base64 photo for identity verification
 
     const interview = await Interview.findById(interviewId);
     if (!interview) {
@@ -242,6 +244,14 @@ router.post('/interviews/:interviewId/apply', auth, async (req, res) => {
       console.log(`✅ ATS Score calculated: ${atsResult.score}%`);
     }
 
+    // Store candidate photo for identity verification if provided
+    if (candidatePhoto && candidatePhoto.startsWith('data:image')) {
+      interview.candidateApplicationPhoto = candidatePhoto;
+      interview.candidateApplicationPhotoUploadedAt = new Date();
+      interview.identityVerificationRequired = true;
+      console.log('📸 Candidate photo stored for identity verification');
+    }
+
     // Update interview with candidate and set to pending
     interview.candidateId = req.candidate.id;
     interview.applicationStatus = 'pending';
@@ -249,10 +259,16 @@ router.post('/interviews/:interviewId/apply', auth, async (req, res) => {
 
     await interview.populate('recruiterId', 'name email company');
 
+    // Strip sensitive data before sending to candidate
+    const interviewResponse = interview.toObject();
+    delete interviewResponse.atsScore;
+    delete interviewResponse.applicationScores;
+    delete interviewResponse.candidateApplicationPhoto;
+    delete interviewResponse.resumeText;
+
     res.json({ 
       message: 'Application submitted successfully. Awaiting recruiter approval.',
-      interview,
-      atsScore: atsResult ? atsResult.score : null
+      interview: interviewResponse
     });
   } catch (err) {
     console.error('Apply for interview error:', err);
@@ -267,6 +283,7 @@ router.get('/my-applications', auth, async (req, res) => {
       candidateId: req.candidate.id,
       applicationStatus: { $in: ['pending', 'accepted', 'rejected'] }
     })
+      .select('-atsScore -applicationScores -candidateApplicationPhoto -resumeText')
       .populate('recruiterId', 'name email company')
       .sort({ createdAt: -1 });
 
@@ -285,6 +302,7 @@ router.get('/interviews/accepted', auth, async (req, res) => {
       applicationStatus: 'accepted',
       status: { $in: ['scheduled', 'in-progress'] }
     })
+      .select('-atsScore -applicationScores -candidateApplicationPhoto -resumeText')
       .populate('recruiterId', 'name email company')
       .sort({ createdAt: -1 });
 

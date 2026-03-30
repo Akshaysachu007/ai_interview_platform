@@ -6,6 +6,8 @@ const API_URL = import.meta.env.VITE_API_URL;
 export default function PricingSettings() {
   const [pricing, setPricing] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [saveMessage, setSaveMessage] = useState('');
   const [editingPlan, setEditingPlan] = useState(null);
   const [formData, setFormData] = useState({ price: '', features: '' });
 
@@ -19,12 +21,22 @@ export default function PricingSettings() {
       const res = await fetch(`${API_URL}/admin/pricing`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
+      if (res.status === 401) {
+        localStorage.removeItem('adminToken');
+        localStorage.removeItem('adminName');
+        localStorage.removeItem('adminEmail');
+        window.location.href = '/admin';
+        return;
+      }
       const data = await res.json();
       if (res.ok) {
         setPricing(data);
+      } else {
+        setError(data.message || 'Failed to load pricing');
       }
     } catch (err) {
       console.error('Error fetching pricing:', err);
+      setError('Network error: ' + err.message);
     } finally {
       setLoading(false);
     }
@@ -39,6 +51,10 @@ export default function PricingSettings() {
   };
 
   const handleSave = async (planType) => {
+    if (!formData.price || isNaN(parseFloat(formData.price))) {
+      setSaveMessage('❌ Please enter a valid price.');
+      return;
+    }
     try {
       const token = localStorage.getItem('adminToken');
       const features = formData.features.split('\n').filter(f => f.trim());
@@ -54,30 +70,44 @@ export default function PricingSettings() {
           features
         })
       });
-      
+      if (res.status === 401) {
+        localStorage.removeItem('adminToken');
+        localStorage.removeItem('adminName');
+        localStorage.removeItem('adminEmail');
+        window.location.href = '/admin';
+        return;
+      }
       if (res.ok) {
-        alert('Pricing updated successfully!');
+        setSaveMessage('✅ Pricing updated successfully!');
         setEditingPlan(null);
         fetchPricing();
+        setTimeout(() => setSaveMessage(''), 3000);
       } else {
         const data = await res.json();
-        alert(data.message || 'Failed to update pricing');
+        setSaveMessage('❌ ' + (data.message || 'Failed to update pricing'));
       }
     } catch (err) {
-      alert('Error updating pricing: ' + err.message);
+      setSaveMessage('❌ Network error: ' + err.message);
     }
   };
 
   const handleCancel = () => {
     setEditingPlan(null);
     setFormData({ price: '', features: '' });
+    setSaveMessage('');
   };
 
   if (loading) return <div>Loading pricing...</div>;
+  if (error) return <div className="error-message" style={{padding:'20px',color:'#c0392b',background:'#fdecea',borderRadius:'8px',margin:'16px'}}>⚠️ {error}</div>;
 
   return (
     <div className="pricing-settings">
       <h2>Subscription Pricing Management</h2>
+      {saveMessage && (
+        <div style={{padding:'10px 16px',marginBottom:'12px',borderRadius:'8px',background: saveMessage.startsWith('✅') ? '#e9f9ee' : '#fdecea', color: saveMessage.startsWith('✅') ? '#1a7a3c' : '#c0392b',fontWeight:'500'}}>
+          {saveMessage}
+        </div>
+      )}
       
       <div className="pricing-cards">
         {pricing.map((plan) => (

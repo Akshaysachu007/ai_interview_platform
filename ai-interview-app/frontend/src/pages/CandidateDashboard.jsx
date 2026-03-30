@@ -6,6 +6,7 @@ import EditProfileModal from '../components/EditProfileModal';
 import InterviewSelector from '../components/InterviewSelector';
 import InterviewBrowser from '../components/InterviewBrowser';
 import InterviewAnalytics from '../components/InterviewAnalytics';
+import CandidateReports from '../components/CandidateReports';
 import '../components/InterviewSelector.css';
 
 const API_URL = import.meta.env.VITE_API_URL;
@@ -20,7 +21,15 @@ export default function CandidateDashboard() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [activeView, setActiveView] = useState('browse'); // 'browse', 'start', or 'analytics'
+  const [activeView, setActiveView] = useState('browse'); // 'browse', 'start', 'analytics', or 'reports'
+
+  const navTabs = [
+    { key: 'browse', label: 'Browse Jobs' },
+    { key: 'start', label: 'Practice Test' },
+    { key: 'analytics', label: 'Analytics' },
+    { key: 'reports', label: 'Reports' }
+  ];
+
   useEffect(() => {
     if (!isAuthenticated) {
       navigate('/candidate');
@@ -51,10 +60,6 @@ export default function CandidateDashboard() {
     };
     fetchProfile();
   }, [isAuthenticated, navigate, showEdit]);
-
-  // Example interview data
-  const attendedInterviews = [];
-  const upcomingInterviews = [];
 
   const handleSaveProfile = async (updated) => {
     try {
@@ -129,19 +134,46 @@ export default function CandidateDashboard() {
     window.location.href = '/';
   };
 
-  if (loading) return <div>Loading...</div>;
-  if (error) return <div style={{ color: 'red' }}>{error}</div>;
+  const profileCompletion = profile?.completed
+    ? 100
+    : Math.min(
+      100,
+      [profile?.name, profile?.email, profile?.phone, profile?.bio, profile?.skills?.length].filter(Boolean).length * 20
+    );
+
+  const profileStatusText = profileCompletion === 100
+    ? 'Profile complete and ready for interview workflows'
+    : 'Complete your profile to improve job matching and analytics quality';
+
+  if (loading) return <div className="candidate-dashboard-state">Loading your dashboard...</div>;
+  if (error) return <div className="candidate-dashboard-state error">{error}</div>;
   if (!profile) return null;
 
   return (
-    <div>
+    <div className="candidate-dashboard-shell">
       <CandidateNavbar onLogout={handleLogout} />
       <div className="candidate-dashboard">
         <aside className="dashboard-sidebar" id="profile">
-          <img src={profile.avatar || 'https://ui-avatars.com/api/?name=' + encodeURIComponent(profile.name)} alt="avatar" className="avatar" />
+          <img
+            src={profile.avatar || 'https://ui-avatars.com/api/?name=' + encodeURIComponent(profile.name)}
+            alt="avatar"
+            className="avatar"
+          />
           <h2>{profile.name}</h2>
-          <p className="role">Candidate</p>
+          <p className="role">Candidate Workspace</p>
           <p className="email">{profile.email}</p>
+
+          <div className="profile-meter">
+            <div className="profile-meter-top">
+              <span>Profile completion</span>
+              <strong>{profileCompletion}%</strong>
+            </div>
+            <div className="profile-meter-track">
+              <span style={{ width: `${profileCompletion}%` }} />
+            </div>
+            <p>{profileStatusText}</p>
+          </div>
+
           {!profile.completed && (
             <button className="edit-profile-btn" onClick={() => setShowEdit(true)}>Complete Profile</button>
           )}
@@ -149,7 +181,7 @@ export default function CandidateDashboard() {
             <p className="phone">{profile.phone}</p>
             <p className="bio">{profile.bio}</p>
             <div className="skills-list">
-              <strong>Skills:</strong>
+              <strong>Skills</strong>
               <ul>
                 {profile.skills && profile.skills.length > 0 ? profile.skills.map((s, i) => <li key={i}>{s}</li>) : <li>None</li>}
               </ul>
@@ -157,133 +189,104 @@ export default function CandidateDashboard() {
             <button className="edit-profile-btn" onClick={() => setShowEdit(true)}>Edit Profile</button>
           </>}
         </aside>
+
         <main className="dashboard-main">
-          <div style={{ 
-            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', 
-            color: 'white', 
-            padding: '30px', 
-            borderRadius: '12px', 
-            marginBottom: '30px',
-            textAlign: 'center'
-          }}>
-            <h2 style={{ marginBottom: '15px', fontSize: '2em' }}>🎯 AI-Powered Interview System</h2>
-            <p style={{ marginBottom: '20px', fontSize: '1.1em' }}>
-              Browse available interviews, apply to recruiters, and start your AI-monitored practice interviews
-            </p>
-            <div style={{ display: 'flex', gap: '15px', justifyContent: 'center', flexWrap: 'wrap' }}>
-              <button 
-                onClick={() => setActiveView('browse')}
-                style={{
-                  background: activeView === 'browse' ? 'white' : 'rgba(255,255,255,0.3)',
-                  color: activeView === 'browse' ? '#667eea' : 'white',
-                  border: '2px solid white',
-                  padding: '12px 30px',
-                  fontSize: '1em',
-                  fontWeight: 'bold',
-                  borderRadius: '8px',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s'
-                }}
-              >
-                📋 Browse Interviews
+          <section className="dashboard-hero">
+            <div className="hero-copy">
+              <p className="hero-eyebrow">Candidate Dashboard</p>
+              <h1>Interview readiness at a glance</h1>
+              <p>
+                Manage applications, run AI practice interviews, and track your performance progress from one place.
+              </p>
+            </div>
+
+            <div className="hero-actions">
+              <button className="primary-action" onClick={() => navigate('/candidate/interview')}>
+                Start Practice Interview
               </button>
-              <button 
-                onClick={() => setActiveView('start')}
-                style={{
-                  background: activeView === 'start' ? 'white' : 'rgba(255,255,255,0.3)',
-                  color: activeView === 'start' ? '#667eea' : 'white',
-                  border: '2px solid white',
-                  padding: '12px 30px',
-                  fontSize: '1em',
-                  fontWeight: 'bold',
-                  borderRadius: '8px',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s'
-                }}
-              >
-                🎯 Practice Interview
-              </button>
-              <button 
-                onClick={() => setActiveView('analytics')}
-                style={{
-                  background: activeView === 'analytics' ? 'white' : 'rgba(255,255,255,0.3)',
-                  color: activeView === 'analytics' ? '#667eea' : 'white',
-                  border: '2px solid white',
-                  padding: '12px 30px',
-                  fontSize: '1em',
-                  fontWeight: 'bold',
-                  borderRadius: '8px',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s'
-                }}
-              >
-                📊 Analytics
+              <button className="secondary-action" onClick={() => setActiveView('browse')}>
+                Browse Jobs
               </button>
             </div>
-          </div>
+          </section>
 
-          {activeView === 'browse' ? (
-            <InterviewBrowser />
-          ) : activeView === 'analytics' ? (
-            <InterviewAnalytics />
-          ) : (
-            <>
-              <div style={{ marginBottom: '20px', textAlign: 'center' }}>
-                <button 
-                  onClick={() => navigate('/candidate/interview')}
-                  style={{
-                    background: '#667eea',
-                    color: 'white',
-                    border: 'none',
-                    padding: '15px 40px',
-                    fontSize: '1.2em',
-                    fontWeight: 'bold',
-                    borderRadius: '8px',
-                    cursor: 'pointer',
-                    boxShadow: '0 4px 8px rgba(0,0,0,0.2)',
-                    transition: 'transform 0.2s'
-                  }}
-                  onMouseOver={(e) => e.target.style.transform = 'scale(1.05)'}
-                  onMouseOut={(e) => e.target.style.transform = 'scale(1)'}
-                >
-                  🚀 Start Practice Interview
-                </button>
-              </div>
-              <InterviewSelector candidateProfile={profile} onRegister={(iv, candidate) => {
-                alert(`Registered for ${iv.title} as ${candidate.name} (${candidate.email})!`);
-              }} />
-            </>
-          )}
+          <section className="dashboard-kpis">
+            <article className="kpi-card">
+              <p>Active View</p>
+              <strong>{navTabs.find((tab) => tab.key === activeView)?.label || 'Overview'}</strong>
+            </article>
+            <article className="kpi-card">
+              <p>Skills Added</p>
+              <strong>{profile.skills?.length || 0}</strong>
+            </article>
+            <article className="kpi-card">
+              <p>Profile Status</p>
+              <strong>{profile.completed ? 'Complete' : 'In Progress'}</strong>
+            </article>
+            <article className="kpi-card">
+              <p>Contact Ready</p>
+              <strong>{profile.phone ? 'Yes' : 'No'}</strong>
+            </article>
+          </section>
 
-          <section className="dashboard-section" id="interviews">
-            <h3>Upcoming Interviews</h3>
-            {upcomingInterviews.length === 0 ? (
-              <p style={{color: 'black'}}>No upcoming interviews.</p>
+          <section className="dashboard-nav-tabs" aria-label="Candidate dashboard views">
+            {navTabs.map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                className={activeView === tab.key ? 'active' : ''}
+                onClick={() => setActiveView(tab.key)}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </section>
+
+          <section className="dashboard-content-card">
+            {activeView === 'browse' ? (
+              <InterviewBrowser />
+            ) : activeView === 'analytics' ? (
+              <InterviewAnalytics />
+            ) : activeView === 'reports' ? (
+              <CandidateReports />
             ) : (
-              <ul>
-                {upcomingInterviews.map((iv) => (
-                  <li key={iv.id}>
-                    <strong>{iv.title}</strong> - {iv.date} <span className="status scheduled">{iv.status}</span>
-                  </li>
-                ))}
-              </ul>
+              <>
+                <div className="start-view-header">
+                  <h2>Practice Interview Setup</h2>
+                  <p>
+                    Select an interview track below or launch a direct AI practice session for quick preparation.
+                  </p>
+                </div>
+                <InterviewSelector
+                  candidateProfile={profile}
+                  onRegister={(iv, candidate) => {
+                    alert(`Registered for ${iv.title} as ${candidate.name} (${candidate.email})`);
+                  }}
+                />
+              </>
             )}
           </section>
-          <section className="dashboard-section">
-            <h3>Attended Interviews</h3>
-            {attendedInterviews.length === 0 ? (
-              <p style={{color:'black'}}>No attended interviews.</p>
-            ) : (
-              <ul>
-                {attendedInterviews.map((iv) => (
-                  <li key={iv.id}>
-                    <strong>{iv.title}</strong> - {iv.date} <span className="status completed">{iv.status}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
+
+          <section className="dashboard-footer-grid">
+            <article className="dashboard-section compact">
+              <h3>Recommended Next Step</h3>
+              <p>
+                {profile.completed
+                  ? 'Continue with a practice interview and review your analytics to improve response quality.'
+                  : 'Complete your profile first so recruiters and job matching workflows can evaluate your background accurately.'}
+              </p>
+            </article>
+
+            <article className="dashboard-section compact">
+              <h3>Profile Actions</h3>
+              <div className="footer-actions">
+                <button className="secondary-action" onClick={() => setShowEdit(true)}>Update Profile</button>
+                <button className="secondary-action" onClick={() => setActiveView('reports')}>Open Reports</button>
+              </div>
+            </article>
           </section>
         </main>
+
         {showEdit && (
           <EditProfileModal 
             profile={profile} 

@@ -96,7 +96,7 @@ const LiveInterviewMonitor = () => {
     return (
       <div className="live-monitor-loading">
         <div className="spinner"></div>
-        <p>Loading live interviews...</p>
+        <p>Loading live assessments...</p>
       </div>
     );
   }
@@ -107,13 +107,13 @@ const LiveInterviewMonitor = () => {
       <div className="live-interview-monitor">
         <div className="monitor-header">
           <div className="header-content">
-            <h2>🔴 Live Interviews</h2>
+            <h2>🔴 Live Assessments</h2>
             <div className="live-badge">
               <span className="pulse-dot"></span>
               <span>{liveInterviews.length} Active</span>
             </div>
           </div>
-          <p className="header-subtitle">Monitor ongoing candidate interviews in real-time</p>
+          <p className="header-subtitle">Monitor ongoing candidate assessments in real-time</p>
         </div>
 
         {error && (
@@ -125,8 +125,8 @@ const LiveInterviewMonitor = () => {
         {liveInterviews.length === 0 ? (
           <div className="no-interviews">
             <div className="no-interviews-icon">📹</div>
-            <h3>No Live Interviews</h3>
-            <p>There are currently no ongoing interviews. Check back when candidates start their interviews.</p>
+            <h3>No Live Assessments</h3>
+            <p>There are currently no ongoing assessments. Check back when candidates start their assessments.</p>
           </div>
         ) : (
           <div className="interviews-grid">
@@ -197,7 +197,7 @@ const LiveInterviewMonitor = () => {
             ← Back to List
           </button>
           <div className="detail-title">
-            <h2>Live Interview Monitoring</h2>
+            <h2>Live Assessment Monitoring</h2>
             <div className="live-indicator">
               <span className="pulse-dot"></span>
               <span>LIVE</span>
@@ -261,7 +261,7 @@ const LiveInterviewMonitor = () => {
 
           {/* Interview Progress */}
           <div className="detail-section progress-section">
-            <h3>Interview Progress</h3>
+            <h3>Assessment Progress</h3>
             <div className="progress-info">
               <div className="progress-bar">
                 <div 
@@ -405,7 +405,7 @@ const LiveInterviewMonitor = () => {
   return (
     <div className="live-monitor-loading">
       <div className="spinner"></div>
-      <p>Loading interview details...</p>
+      <p>Loading assessment details...</p>
     </div>
   );
 };

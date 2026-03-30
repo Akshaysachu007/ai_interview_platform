@@ -6,6 +6,7 @@ const API_URL = import.meta.env.VITE_API_URL;
 export default function SystemLogs() {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [filter, setFilter] = useState('all'); // all, verify, delete, pricing
 
   useEffect(() => {
@@ -18,12 +19,23 @@ export default function SystemLogs() {
       const res = await fetch(`${API_URL}/admin/logs`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
+      if (res.status === 401) {
+        localStorage.removeItem('adminToken');
+        localStorage.removeItem('adminName');
+        localStorage.removeItem('adminEmail');
+        window.location.href = '/admin';
+        return;
+      }
       const data = await res.json();
       if (res.ok) {
-        setLogs(data);
+        // Backend returns { logs: [...], total: N }
+        setLogs(data.logs || []);
+      } else {
+        setError(data.message || 'Failed to load logs');
       }
     } catch (err) {
       console.error('Error fetching logs:', err);
+      setError('Network error: ' + err.message);
     } finally {
       setLoading(false);
     }
@@ -35,15 +47,17 @@ export default function SystemLogs() {
   };
 
   const getActionBadgeClass = (action) => {
-    if (action.includes('verify')) return 'action-verify';
-    if (action.includes('delete')) return 'action-delete';
-    if (action.includes('pricing')) return 'action-pricing';
+    const lower = action.toLowerCase();
+    if (lower.includes('verif')) return 'action-verify';
+    if (lower.includes('delet')) return 'action-delete';
+    if (lower.includes('pric') || lower.includes('login')) return 'action-pricing';
     return 'action-default';
   };
 
   const filteredLogs = getFilteredLogs();
 
   if (loading) return <div>Loading logs...</div>;
+  if (error) return <div className="error-message" style={{padding:'20px',color:'#c0392b',background:'#fdecea',borderRadius:'8px',margin:'16px'}}>⚠️ {error}</div>;
 
   return (
     <div className="system-logs">
@@ -96,8 +110,8 @@ export default function SystemLogs() {
               {filteredLogs.map((log) => (
                 <tr key={log._id}>
                   <td className="timestamp-cell">
-                    <div>{new Date(log.timestamp).toLocaleDateString()}</div>
-                    <div className="time">{new Date(log.timestamp).toLocaleTimeString()}</div>
+                    <div>{new Date(log.createdAt).toLocaleDateString()}</div>
+                    <div className="time">{new Date(log.createdAt).toLocaleTimeString()}</div>
                   </td>
                   <td>
                     <span className={`action-badge ${getActionBadgeClass(log.action)}`}>
@@ -115,12 +129,8 @@ export default function SystemLogs() {
                     )}
                   </td>
                   <td>
-                    {log.targetUser ? (
-                      <>
-                        <div>{log.targetUser.name}</div>
-                        <div className="email">{log.targetUser.email}</div>
-                        <span className="user-type-badge">{log.targetUserType}</span>
-                      </>
+                    {log.targetUserType ? (
+                      <span className="user-type-badge">{log.targetUserType}</span>
                     ) : (
                       'N/A'
                     )}

@@ -6,6 +6,7 @@ const API_URL = import.meta.env.VITE_API_URL;
 export default function RecruiterManagement() {
   const [recruiters, setRecruiters] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [filter, setFilter] = useState('all'); // all, pending, verified
 
   useEffect(() => {
@@ -18,12 +19,22 @@ export default function RecruiterManagement() {
       const res = await fetch(`${API_URL}/admin/recruiters`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
+      if (res.status === 401) {
+        localStorage.removeItem('adminToken');
+        localStorage.removeItem('adminName');
+        localStorage.removeItem('adminEmail');
+        window.location.href = '/admin';
+        return;
+      }
       const data = await res.json();
       if (res.ok) {
         setRecruiters(data);
+      } else {
+        setError(data.message || 'Failed to load recruiters');
       }
     } catch (err) {
       console.error('Error fetching recruiters:', err);
+      setError('Network error: ' + err.message);
     } finally {
       setLoading(false);
     }
@@ -44,7 +55,13 @@ export default function RecruiterManagement() {
         },
         body: JSON.stringify({ verified: !currentStatus })
       });
-      
+      if (res.status === 401) {
+        localStorage.removeItem('adminToken');
+        localStorage.removeItem('adminName');
+        localStorage.removeItem('adminEmail');
+        window.location.href = '/admin';
+        return;
+      }
       if (res.ok) {
         alert(`Recruiter ${currentStatus ? 'unverified' : 'verified'} successfully!`);
         fetchRecruiters();
@@ -68,7 +85,13 @@ export default function RecruiterManagement() {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      
+      if (res.status === 401) {
+        localStorage.removeItem('adminToken');
+        localStorage.removeItem('adminName');
+        localStorage.removeItem('adminEmail');
+        window.location.href = '/admin';
+        return;
+      }
       if (res.ok) {
         alert('Recruiter deleted successfully!');
         fetchRecruiters();
@@ -91,6 +114,7 @@ export default function RecruiterManagement() {
   const filteredRecruiters = getFilteredRecruiters();
 
   if (loading) return <div>Loading recruiters...</div>;
+  if (error) return <div className="error-message" style={{padding:'20px',color:'#c0392b',background:'#fdecea',borderRadius:'8px',margin:'16px'}}>⚠️ {error}</div>;
 
   return (
     <div className="recruiter-management">

@@ -84,28 +84,51 @@ export default function EditProfileModal({ profile, onSave, onClose, saving }) {
 
   return (
     <div className="edit-profile-modal-backdrop">
-      <div className="edit-profile-modal">
-        <h2>Edit Profile</h2>
+      <div className="edit-profile-modal" role="dialog" aria-modal="true" aria-labelledby="edit-profile-title">
+        <div className="modal-header">
+          <div>
+            <p className="modal-eyebrow">Candidate Profile</p>
+            <h2 id="edit-profile-title">Edit Profile</h2>
+          </div>
+          <button type="button" className="modal-close" onClick={onClose} disabled={saving} aria-label="Close edit profile modal">
+            x
+          </button>
+        </div>
+
         <form onSubmit={handleSubmit}>
           <label>Profile Picture
-            <input type="file" accept="image/*" onChange={handleAvatarChange} />
+            <input type="file" accept="image/*" onChange={handleAvatarChange} disabled={saving} />
           </label>
           {form.avatar && <img src={form.avatar} alt="avatar preview" className="avatar-preview" />}
+
+          <div className="modal-grid">
           <label>Name
             <input name="name" value={form.name} onChange={handleChange} required />
           </label>
           <label>Email
             <input name="email" value={form.email} onChange={handleChange} required type="email" />
           </label>
+          </div>
+
+          <div className="modal-grid">
           <label>Phone
             <input name="phone" value={form.phone} onChange={handleChange} required type="tel" />
           </label>
           <label>Skills (comma separated)
             <input name="skills" value={form.skills} onChange={handleChange} placeholder="e.g. React, Node.js, Python" />
           </label>
+          </div>
+
           <label>Bio
-            <textarea name="bio" value={form.bio} onChange={handleChange} rows={3} />
+            <textarea
+              name="bio"
+              value={form.bio}
+              onChange={handleChange}
+              rows={5}
+              placeholder="Write a concise professional summary about your background and strengths"
+            />
           </label>
+
           <label>Resume (PDF or DOC)
             <input 
               type="file" 
@@ -113,20 +136,23 @@ export default function EditProfileModal({ profile, onSave, onClose, saving }) {
               onChange={handleResumeChange} 
               disabled={loading || saving}
             />
-            {loading && <span style={{ fontSize: '0.95em', color: '#f59e0b' }}>⏳ Reading file...</span>}
-            {!loading && resumeName && <span style={{ fontSize: '0.95em', color: '#6366f1' }}>✓ {resumeName}</span>}
+            <p className="resume-hint">Upload your latest resume for automatic profile extraction and updates.</p>
+            {loading && <span className="resume-status warning">Reading file...</span>}
+            {!loading && resumeName && <span className="resume-status success">{resumeName}</span>}
           </label>
+
           <div className="modal-actions">
             <button 
               type="submit" 
+              className="save-btn"
               disabled={loading || saving}
             >
-              {saving ? '💾 Parsing & Saving...' : 'Save'}
+              {saving ? 'Parsing and Saving...' : 'Save Changes'}
             </button>
             <button 
               type="button" 
               onClick={onClose} 
-              className="cancel"
+              className="cancel-btn"
               disabled={saving}
             >
               Cancel

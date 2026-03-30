@@ -88,8 +88,8 @@ export default function AIReports() {
         <div className="header-title">
           <Brain size={32} />
           <div>
-            <h1>AI Interview Evaluations</h1>
-            <p>Comprehensive AI-powered analysis of all completed interviews</p>
+            <h1>AI Job Evaluations</h1>
+            <p>Comprehensive AI-powered analysis of all completed assessments</p>
           </div>
         </div>
       </div>
@@ -143,7 +143,7 @@ export default function AIReports() {
             </div>
             <div className="stat-content">
               <h3>{summary.flaggedCount}</h3>
-              <p>Flagged Interviews</p>
+              <p>Flagged Assessments</p>
             </div>
           </div>
         </div>
@@ -185,7 +185,7 @@ export default function AIReports() {
         <div className="no-evaluations">
           <Brain size={48} />
           <h3>No AI Evaluations Found</h3>
-          <p>No completed interviews match your search criteria.</p>
+          <p>No completed assessments match your search criteria.</p>
         </div>
       ) : (
         <div className="evaluations-grid">
@@ -345,7 +345,16 @@ export default function AIReports() {
                 <h2>AI Evaluation Report - {selectedEvaluation.candidateName}</h2>
                 <p>{selectedEvaluation.jobTitle} | {selectedEvaluation.stream}</p>
               </div>
-              <button className="close-btn" onClick={() => setSelectedEvaluation(null)}>×</button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <button 
+                  className="btn-view-details"
+                  onClick={() => window.location.href = `/interview/${selectedEvaluation.interviewId}/report`}
+                  style={{ background: '#3b82f6', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer', fontSize: '14px' }}
+                >
+                  📊 Full Detailed Report
+                </button>
+                <button className="close-btn" onClick={() => setSelectedEvaluation(null)}>×</button>
+              </div>
             </div>
 
             <div className="modal-body-eval">
@@ -612,9 +621,9 @@ export default function AIReports() {
                 </div>
               </section>
 
-              {/* Interview Metadata */}
+              {/* Job Metadata */}
               <section className="eval-section">
-                <h3>Interview Details</h3>
+                <h3>Job Details</h3>
                 <div className="metadata-grid">
                   <div><strong>Stream:</strong> {selectedEvaluation.stream}</div>
                   <div><strong>Difficulty:</strong> {selectedEvaluation.difficulty}</div>

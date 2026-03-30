@@ -167,3 +167,39 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* Candidate Photo Styles */
+.candidate-photo {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  object-fit: cover;
+  cursor: pointer;
+  border: 2px solid #e0e0e0;
+  transition: border-color 0.2s;
+}
+
+.candidate-photo:hover {
+  border-color: #667eea;
+}
+
+.photo-enlarge-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  cursor: pointer;
+}
+
+.photo-enlarge-overlay img {
+  max-width: 500px;
+  max-height: 500px;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}

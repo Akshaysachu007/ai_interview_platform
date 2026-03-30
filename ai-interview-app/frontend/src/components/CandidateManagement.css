@@ -1,0 +1,188 @@
+.candidate-management {
+  padding: 20px;
+}
+
+.candidate-management .management-header {
+  margin-bottom: 20px;
+}
+
+.candidate-management .management-header h2 {
+  margin-bottom: 15px;
+  color: #1a1a2e;
+}
+
+.candidate-management .header-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.candidate-management .search-input {
+  width: 100%;
+  max-width: 400px;
+  padding: 10px 16px;
+  border: 2px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  transition: border-color 0.2s;
+}
+
+.candidate-management .search-input:focus {
+  outline: none;
+  border-color: #667eea;
+}
+
+.candidate-management .filter-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.candidate-management .filter-buttons button {
+  padding: 8px 16px;
+  border: 2px solid #e2e8f0;
+  background: white;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.candidate-management .filter-buttons button.active {
+  background: #667eea;
+  color: white;
+  border-color: #667eea;
+}
+
+.candidate-management .filter-buttons button:hover:not(.active) {
+  border-color: #667eea;
+  color: #667eea;
+}
+
+.candidate-management .no-data {
+  text-align: center;
+  padding: 40px;
+  color: #94a3b8;
+  font-size: 1.1rem;
+}
+
+.candidates-table {
+  overflow-x: auto;
+}
+
+.candidates-table table {
+  width: 100%;
+  border-collapse: collapse;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.candidates-table th {
+  background: #f8fafc;
+  padding: 14px 16px;
+  text-align: left;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.candidates-table td {
+  padding: 14px 16px;
+  border-top: 1px solid #f1f5f9;
+  font-size: 0.95rem;
+}
+
+.candidates-table tr:hover {
+  background: #f8fafc;
+}
+
+.candidate-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.candidate-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.stream-badge {
+  background: #eef2ff;
+  color: #4f46e5;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.skills-cell {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.skill-tag {
+  background: #f0fdf4;
+  color: #16a34a;
+  padding: 2px 8px;
+  border-radius: 8px;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.skill-tag.more {
+  background: #fef3c7;
+  color: #d97706;
+}
+
+.candidate-management .status-badge {
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.candidate-management .status-badge.complete {
+  background: #dcfce7;
+  color: #16a34a;
+}
+
+.candidate-management .status-badge.incomplete {
+  background: #fef9c3;
+  color: #ca8a04;
+}
+
+.candidate-management .actions-cell {
+  display: flex;
+  gap: 8px;
+}
+
+.candidate-management .delete-btn {
+  padding: 6px 12px;
+  background: #fee2e2;
+  color: #dc2626;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.candidate-management .delete-btn:hover {
+  background: #dc2626;
+  color: white;
+}

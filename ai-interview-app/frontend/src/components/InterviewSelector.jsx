@@ -9,8 +9,8 @@ const recruiters = [
 
 // Example static data for interviews (replace with backend fetch later)
 const interviews = [
-  { id: 1, recruiter: 'TechCorp', stream: 'Frontend', title: 'React Developer Interview', date: '2025-11-20' },
-  { id: 2, recruiter: 'TechCorp', stream: 'AI/ML', title: 'ML Engineer Interview', date: '2025-11-25' },
+  { id: 1, recruiter: 'TechCorp', stream: 'Frontend', title: 'React Developer Assessment', date: '2025-11-20' },
+  { id: 2, recruiter: 'TechCorp', stream: 'AI/ML', title: 'ML Engineer Assessment', date: '2025-11-25' },
   { id: 3, recruiter: 'InnoSoft', stream: 'Full Stack', title: 'Full Stack Developer', date: '2025-12-01' },
   { id: 4, recruiter: 'DataWorks', stream: 'Data Science', title: 'Data Scientist', date: '2025-12-05' },
 ];
@@ -44,7 +44,7 @@ export default function InterviewSelector({ candidateProfile, onRegister }) {
 
   return (
     <div className="interview-selector">
-      <h3>Find and Register for Interviews</h3>
+      <h3>Find and Register for Jobs</h3>
       <div className="selector-row">
         <label>Recruiter:
           <select value={selectedRecruiter} onChange={e => setSelectedRecruiter(e.target.value)}>
@@ -61,7 +61,7 @@ export default function InterviewSelector({ candidateProfile, onRegister }) {
       </div>
       <div className="interview-list">
         {filteredInterviews.length === 0 ? (
-          <p>No interviews available for this selection.</p>
+          <p>No jobs available for this selection.</p>
         ) : (
           <ul>
             {filteredInterviews.map(iv => (

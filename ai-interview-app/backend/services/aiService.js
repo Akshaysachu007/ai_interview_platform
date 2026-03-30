@@ -1,9 +1,11 @@
 // Real AI service using OpenAI GPT-4 for intelligent interview system
 // Enhanced with custom ML-based question generation
+// LOCAL NLP evaluation is PRIMARY; GPT is FALLBACK only
 import OpenAI from 'openai';
 import dotenv from 'dotenv';
 import questionGenerator from '../ml/questionGenerator.js';
 import difficultyPredictor from '../ml/difficultyPredictor.js';
+import answerEvaluationService from './answerEvaluationService.js';
 // import ResumeParserService from './resumeParserService.js'; // Removed - using simple Python parser instead
 
 dotenv.config();
@@ -1146,7 +1148,8 @@ Score this candidate against the job requirements and provide detailed gap analy
   }
 
   /**
-   * Analyze answer quality using AI
+   * Analyze answer quality using LOCAL NLP evaluation (PRIMARY)
+   * GPT is ONLY used as fallback when local confidence is too low
    */
   static async analyzeAnswerQuality(questions, jobDescription, stream, difficulty) {
     const answeredQuestions = questions.filter(q => q.answer);
@@ -1161,19 +1164,108 @@ Score this candidate against the job requirements and provide detailed gap analy
       };
     }
 
-    // Check if OpenAI API is available
-    if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY === 'your_openai_api_key_here') {
-      console.warn('⚠️ OpenAI API not configured. Using heuristic evaluation.');
-      return this.analyzeAnswerQualityHeuristic(answeredQuestions);
-    }
-
+    // ====== PRIMARY: Local NLP Evaluation ======
+    console.log('🧠 Using LOCAL NLP Evaluation Engine (primary)...');
+    
     try {
-      const prompt = `Evaluate the quality of these interview answers for a ${stream} position at ${difficulty} level.
+      const localResults = answerEvaluationService.evaluateInterview(answeredQuestions, { stream, difficulty });
+      
+      console.log(`   📊 Local NLP Results:`);
+      console.log(`      Overall Score: ${localResults.overallScore}/100`);
+      console.log(`      Confidence: ${(localResults.overallConfidence * 100).toFixed(1)}%`);
+      console.log(`      Questions needing GPT fallback: ${localResults.gptFallbackNeeded}/${localResults.totalQuestions}`);
+
+      // Per-question detailed scoring
+      const perQuestionScores = localResults.questionResults.map(r => ({
+        score: r.score,
+        confidence: r.confidence,
+        feedback: r.feedback,
+        breakdown: r.breakdown,
+        details: r.details,
+        useGptFallback: r.useGptFallback
+      }));
+
+      // If overall confidence is high enough, use local results directly
+      if (localResults.overallConfidence >= 0.4 && localResults.gptFallbackNeeded < localResults.totalQuestions * 0.5) {
+        console.log('   ✅ Local NLP confidence is sufficient - using local scores');
+        
+        // Map local NLP scores to the expected output format
+        const avgScore = localResults.overallScore;
+        
+        // Calculate sub-scores from topic-based evaluation breakdowns
+        let totalKeywordScore = 0;
+        let totalConceptScore = 0;
+        let totalSemanticScore = 0;
+        let totalRelevanceScore = 0;
+        let totalDepthScore = 0;
+        let totalStructuralScore = 0;
+        let count = 0;
+
+        for (const result of localResults.questionResults) {
+          if (result.breakdown) {
+            totalKeywordScore += result.breakdown.keywordScore || 0;
+            totalConceptScore += result.breakdown.conceptGroupScore || 0;
+            totalSemanticScore += result.breakdown.semanticScore || 0;
+            totalRelevanceScore += result.breakdown.relevanceScore || 0;
+            totalDepthScore += result.breakdown.depthScore || 0;
+            totalStructuralScore += result.breakdown.structuralScore || 0;
+            count++;
+          }
+        }
+
+        const avgConcept = count > 0 ? Math.round(totalConceptScore / count) : avgScore;
+        const avgSemantic = count > 0 ? Math.round(totalSemanticScore / count) : avgScore;
+        const avgKeyword = count > 0 ? Math.round(totalKeywordScore / count) : avgScore;
+        const avgRelevance = count > 0 ? Math.round(totalRelevanceScore / count) : avgScore;
+        const avgDepth = count > 0 ? Math.round(totalDepthScore / count) : avgScore;
+
+        return {
+          technicalAccuracyScore: avgConcept,
+          relevanceScore: avgRelevance,
+          completenessScore: avgKeyword,
+          depthScore: avgDepth,
+          overallQualityScore: avgScore,
+          evaluationMethod: 'local-nlp',
+          localConfidence: localResults.overallConfidence,
+          perQuestionScores,
+          reasoning: `Evaluated using local NLP engine with ${(localResults.overallConfidence * 100).toFixed(0)}% confidence`
+        };
+      }
+
+      // ====== FALLBACK: GPT Evaluation for low-confidence questions ======
+      console.log('⚠️  Local NLP confidence is low - using GPT as fallback...');
+      
+      // Only send low-confidence questions to GPT to save API calls
+      const lowConfidenceQuestions = answeredQuestions.filter((q, i) => 
+        localResults.questionResults[i]?.useGptFallback
+      );
+
+      // Check if OpenAI API is available
+      if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY === 'your_openai_api_key_here') {
+        console.warn('⚠️ OpenAI API not configured. Using local NLP results as-is.');
+        const avgScore = localResults.overallScore;
+        return {
+          technicalAccuracyScore: avgScore,
+          relevanceScore: avgScore,
+          completenessScore: avgScore - 5,
+          depthScore: avgScore - 10,
+          overallQualityScore: avgScore,
+          evaluationMethod: 'local-nlp-only',
+          localConfidence: localResults.overallConfidence,
+          perQuestionScores,
+          reasoning: 'Local NLP evaluation (GPT fallback unavailable)'
+        };
+      }
+
+      try {
+        console.log(`🤖 Sending ${lowConfidenceQuestions.length} low-confidence questions to GPT...`);
+        
+        const prompt = `Evaluate the quality of these interview answers for a ${stream} position at ${difficulty} level.
 
 Job Context: ${jobDescription || 'General technical interview'}
 
 Questions and Answers:
-${answeredQuestions.map((q, i) => `
+${lowConfidenceQuestions.map((q, i) => `
 Q${i + 1}: ${q.question}
 A${i + 1}: ${q.answer}
 `).join('\n')}
@@ -1195,24 +1287,72 @@ Respond in JSON format:
   "reasoning": "Brief explanation"
 }`;
 
-      const completion = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content: "You are an expert technical interviewer. Evaluate answer quality objectively. Return only valid JSON."
-          },
-          { role: "user", content: prompt }
-        ],
-        temperature: 0.3,
-        max_tokens: 500,
-        response_format: { type: "json_object" }
-      });
+        const completion = await openai.chat.completions.create({
+          model: "gpt-4o-mini",
+          messages: [
+            {
+              role: "system",
+              content: "You are an expert technical interviewer. Evaluate answer quality objectively. Return only valid JSON."
+            },
+            { role: "user", content: prompt }
+          ],
+          temperature: 0.3,
+          max_tokens: 500,
+          response_format: { type: "json_object" }
+        });
 
-      const result = JSON.parse(completion.choices[0].message.content);
-      return result;
-    } catch (error) {
-      console.error('❌ AI Quality Analysis Error:', error.message);
+        const gptResult = JSON.parse(completion.choices[0].message.content);
+
+        // Blend local NLP scores with GPT scores
+        // Weight: local NLP gets proportional to confidence, GPT fills the gap
+        const localWeight = localResults.overallConfidence;
+        const gptWeight = 1 - localWeight;
+
+        const blendedResult = {
+          technicalAccuracyScore: Math.round(
+            (localResults.overallScore * localWeight) + ((gptResult.technicalAccuracyScore || 50) * gptWeight)
+          ),
+          relevanceScore: Math.round(
+            (localResults.overallScore * localWeight) + ((gptResult.relevanceScore || 50) * gptWeight)
+          ),
+          completenessScore: Math.round(
+            (localResults.overallScore * localWeight) + ((gptResult.completenessScore || 50) * gptWeight)
+          ),
+          depthScore: Math.round(
+            (localResults.overallScore * localWeight) + ((gptResult.depthScore || 50) * gptWeight)
+          ),
+          overallQualityScore: Math.round(
+            (localResults.overallScore * localWeight) + ((gptResult.overallQualityScore || 50) * gptWeight)
+          ),
+          evaluationMethod: 'hybrid-nlp-gpt',
+          localConfidence: localResults.overallConfidence,
+          perQuestionScores,
+          reasoning: `Hybrid evaluation: NLP (${(localWeight * 100).toFixed(0)}%) + GPT (${(gptWeight * 100).toFixed(0)}%)`
+        };
+
+        console.log(`   ✅ Hybrid evaluation complete: ${blendedResult.overallQualityScore}/100`);
+        return blendedResult;
+
+      } catch (gptError) {
+        console.error('❌ GPT fallback failed:', gptError.message);
+        // Use local results as final fallback
+        const avgScore = localResults.overallScore;
+        return {
+          technicalAccuracyScore: avgScore,
+          relevanceScore: avgScore,
+          completenessScore: avgScore - 5,
+          depthScore: avgScore - 10,
+          overallQualityScore: avgScore,
+          evaluationMethod: 'local-nlp-only',
+          localConfidence: localResults.overallConfidence,
+          perQuestionScores,
+          reasoning: 'Local NLP evaluation (GPT fallback failed)'
+        };
+      }
+
+    } catch (localError) {
+      console.error('❌ Local NLP evaluation error:', localError.message);
+      console.log('   Falling back to heuristic evaluation...');
       return this.analyzeAnswerQualityHeuristic(answeredQuestions);
     }
   }
@@ -1358,7 +1498,8 @@ Respond in JSON format:
       'multiple_voice': 15,
       'ai_generated_answer': 20,
       'face_not_detected': 10,
-      'multiple_faces': 15
+      'multiple_faces': 15,
+      'looking_away': 8
     };
 
     malpractices.forEach(m => {

@@ -3,11 +3,34 @@ import { useNavigate } from 'react-router-dom';
 import './AdminDashboard.css';
 import AdminNavbar from '../components/AdminNavbar';
 import RecruiterManagement from '../components/RecruiterManagement';
+import CandidateManagement from '../components/CandidateManagement';
+import InterviewOverview from '../components/InterviewOverview';
 import PricingSettings from '../components/PricingSettings';
 import SystemLogs from '../components/SystemLogs';
 import DashboardStats from '../components/DashboardStats';
 
 const API_URL = import.meta.env.VITE_API_URL;
+
+// Shared admin fetch — auto-clears token and redirects on 401
+export async function adminApiFetch(url, options = {}) {
+  const token = localStorage.getItem('adminToken');
+  const res = await fetch(url, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(options.headers || {}),
+      'Authorization': `Bearer ${token}`
+    }
+  });
+  if (res.status === 401) {
+    localStorage.removeItem('adminToken');
+    localStorage.removeItem('adminName');
+    localStorage.removeItem('adminEmail');
+    window.location.href = '/admin';
+    throw new Error('Session expired. Please log in again.');
+  }
+  return res;
+}
 
 export default function AdminDashboard() {
   const navigate = useNavigate();
@@ -59,6 +82,18 @@ export default function AdminDashboard() {
             👔 Recruiters
           </button>
           <button 
+            className={activeTab === 'candidates' ? 'active' : ''}
+            onClick={() => setActiveTab('candidates')}
+          >
+            👥 Candidates
+          </button>
+          <button 
+            className={activeTab === 'interviews' ? 'active' : ''}
+            onClick={() => setActiveTab('interviews')}
+          >
+            🎯 Interviews
+          </button>
+          <button 
             className={activeTab === 'pricing' ? 'active' : ''}
             onClick={() => setActiveTab('pricing')}
           >
@@ -75,6 +110,8 @@ export default function AdminDashboard() {
         <div className="tab-content">
           {activeTab === 'dashboard' && <DashboardStats />}
           {activeTab === 'recruiters' && <RecruiterManagement />}
+          {activeTab === 'candidates' && <CandidateManagement />}
+          {activeTab === 'interviews' && <InterviewOverview />}
           {activeTab === 'pricing' && <PricingSettings />}
           {activeTab === 'logs' && <SystemLogs />}
         </div>

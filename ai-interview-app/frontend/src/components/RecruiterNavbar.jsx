@@ -8,7 +8,7 @@ export default function RecruiterNavbar({ onLogout }) {
       <ul className="navbar-links">
         <li><a href="/recruiter/dashboard">Dashboard</a></li>
         <li><a href="#profile">Profile</a></li>
-        <li><a href="#interviews">Interviews</a></li>
+        <li><a href="#interviews">Jobs</a></li>
         <li><a href="#settings">Settings</a></li>
       </ul>
       <button className="navbar-logout" onClick={onLogout}>Logout</button>

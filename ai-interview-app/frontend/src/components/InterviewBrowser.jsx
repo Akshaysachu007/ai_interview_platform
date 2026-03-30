@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Filter, BookOpen, Award, User, Clock, CheckCircle, Trash2, RefreshCw, FileText, Briefcase, Star } from 'lucide-react';
+import { Search, Filter, BookOpen, Award, User, Clock, CheckCircle, Trash2, RefreshCw, FileText, Briefcase, Star, Camera } from 'lucide-react';
+import ApplicationPhotoCapture from './ApplicationPhotoCapture';
 import './InterviewBrowser.css';
 
 const API_URL = import.meta.env.VITE_API_URL;
@@ -14,6 +15,7 @@ export default function InterviewBrowser() {
   const [view, setView] = useState('available'); // 'available' or 'myApplications'
   const [lastRefresh, setLastRefresh] = useState(Date.now());
   const [selectedInterview, setSelectedInterview] = useState(null); // For showing job details modal
+  const [photoCaptureForId, setPhotoCaptureForId] = useState(null); // For photo capture before apply
 
   const streams = [
     'All',
@@ -93,15 +95,18 @@ export default function InterviewBrowser() {
     }
   };
 
-  const handleApply = async (interviewId) => {
+  const handleApply = async (interviewId, candidatePhoto = null) => {
     setApplying(interviewId);
+    setPhotoCaptureForId(null); // Close photo capture modal
     try {
       const token = localStorage.getItem('candidateToken');
       const response = await fetch(`${API_URL}/candidate/interviews/${interviewId}/apply`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${token}`
-        }
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ candidatePhoto })
       });
 
       const data = await response.json();
@@ -111,20 +116,7 @@ export default function InterviewBrowser() {
       }
 
       let message = 'Application submitted successfully! The recruiter will review your application.';
-      if (data.atsScore !== null && data.atsScore !== undefined) {
-        message += `\n\n📊 Your ATS Score: ${data.atsScore}%`;
-        if (data.atsScore >= 80) {
-          message += '\n✅ Excellent match!';
-        } else if (data.atsScore >= 60) {
-          message += '\n👍 Good match!';
-        } else if (data.atsScore >= 40) {
-          message += '\n💡 Consider match.';
-        } else {
-          message += '\n⚠️ Upload a detailed resume to improve your score.';
-        }
-      } else {
-        message += '\n\n💡 Tip: Upload your resume in your profile to get an ATS score!';
-      }
+      message += '\n\n💡 Tip: Make sure your resume is up to date for the best results!';
       
       alert(message);
       fetchAvailableInterviews(); // Refresh the list
@@ -140,7 +132,7 @@ export default function InterviewBrowser() {
     const action = myApplications.find(app => app._id === interviewId)?.applicationStatus === 'pending' || 
                    myApplications.find(app => app._id === interviewId)?.applicationStatus === 'accepted'
       ? 'withdraw this application'
-      : 'delete this interview';
+      : 'delete this job';
     
     if (!confirm(`Are you sure you want to ${action} for ${stream}?`)) {
       return;
@@ -199,13 +191,30 @@ export default function InterviewBrowser() {
     }
   };
 
-  const getStatusBadge = (status) => {
+  const getStatusBadge = (applicationStatus, interviewStatus) => {
+    // Show completion status first
+    if (interviewStatus === 'completed') {
+      return (
+        <span className="status-badge green">
+          <CheckCircle size={14} />
+          Completed
+        </span>
+      );
+    }
+    if (interviewStatus === 'in-progress') {
+      return (
+        <span className="status-badge blue">
+          <Clock size={14} />
+          In Progress
+        </span>
+      );
+    }
     const badges = {
       pending: { text: 'Pending Review', color: 'orange', icon: Clock },
       accepted: { text: 'Accepted', color: 'green', icon: CheckCircle },
       rejected: { text: 'Rejected', color: 'red', icon: null }
     };
-    const badge = badges[status] || badges.pending;
+    const badge = badges[applicationStatus] || badges.pending;
     const Icon = badge.icon;
     
     return (
@@ -219,13 +228,13 @@ export default function InterviewBrowser() {
   return (
     <div className="interview-browser">
       <div className="browser-header">
-        <h2>Interview Opportunities</h2>
+        <h2>Job Opportunities</h2>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <button
             className="refresh-btn"
             onClick={handleManualRefresh}
             disabled={loading}
-            title="Refresh interviews"
+            title="Refresh jobs"
             style={{
               background: 'transparent',
               border: '2px solid #667eea',
@@ -249,7 +258,7 @@ export default function InterviewBrowser() {
               className={view === 'available' ? 'active' : ''}
               onClick={() => setView('available')}
             >
-              Available Interviews
+              Available Jobs
             </button>
             <button
               className={view === 'myApplications' ? 'active' : ''}
@@ -278,11 +287,11 @@ export default function InterviewBrowser() {
           </div>
 
           {loading ? (
-            <div className="loading">Loading interviews...</div>
+            <div className="loading">Loading jobs...</div>
           ) : interviews.length === 0 ? (
             <div className="no-interviews">
               <BookOpen size={48} />
-              <h3>No Interviews Available</h3>
+              <h3>No Jobs Available</h3>
               <p>Check back later for new opportunities in {selectedStream}.</p>
             </div>
           ) : (
@@ -312,49 +321,75 @@ export default function InterviewBrowser() {
                     <div className="interview-details">
                       <div className="detail-row">
                         <BookOpen size={18} />
-                        <span className="stream-tag">{interview.stream}</span>
+                        <span><strong>Stream:</strong> <span className="stream-tag">{interview.stream}</span></span>
                       </div>
                       <div className="detail-row">
                         <Award size={18} />
-                        <span className={`difficulty-badge ${getDifficultyColor(interview.difficulty)}`}>
+                        <span><strong>Difficulty:</strong> <span className={`difficulty-badge ${getDifficultyColor(interview.difficulty)}`}>
                           {interview.difficulty}
-                        </span>
+                        </span></span>
                       </div>
+                      {interview.timeLimit && (
+                        <div className="detail-row">
+                          <Clock size={18} />
+                          <span><strong>Duration:</strong> {interview.timeLimit} minutes</span>
+                        </div>
+                      )}
+                      {interview.numberOfQuestions && (
+                        <div className="detail-row">
+                          <FileText size={18} />
+                          <span><strong>Questions:</strong> {interview.numberOfQuestions}</span>
+                        </div>
+                      )}
                     </div>
                     
                     {interview.jobDescription && (
-                      <button 
-                        className="view-jd-btn"
-                        onClick={() => setSelectedInterview(interview)}
-                        style={{
-                          color: 'black',
-                          marginTop: '10px',
-                          padding: '6px 12px',
-                          background: '#f0f0f0',
-                          border: 'none',
-                          borderRadius: '4px',
-                          cursor: 'pointer',
-                          fontSize: '0.85rem',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '5px',
-                          width: '100%',
-                          justifyContent: 'center'
-                        }}
-                      >
-                        <FileText size={14} />
-                        View Job Description
-                      </button>
+                      <div style={{
+                        marginTop: '12px',
+                        padding: '10px',
+                        background: '#f8f9fa',
+                        borderRadius: '6px',
+                        borderLeft: '3px solid #667eea'
+                      }}>
+                        <p style={{ 
+                          margin: 0, 
+                          fontSize: '0.85rem', 
+                          color: '#555',
+                          display: '-webkit-box',
+                          WebkitLineClamp: 3,
+                          WebkitBoxOrient: 'vertical',
+                          overflow: 'hidden',
+                          lineHeight: '1.5'
+                        }}>
+                          {interview.jobDescription}
+                        </p>
+                        <button 
+                          onClick={() => setSelectedInterview(interview)}
+                          style={{
+                            color: '#667eea',
+                            background: 'none',
+                            border: 'none',
+                            cursor: 'pointer',
+                            fontSize: '0.85rem',
+                            padding: '4px 0',
+                            marginTop: '4px',
+                            fontWeight: '600'
+                          }}
+                        >
+                          Read full description →
+                        </button>
+                      </div>
                     )}
                   </div>
 
                   <div className="card-footer">
                     <button
                       className="apply-btn"
-                      onClick={() => handleApply(interview._id)}
+                      onClick={() => setPhotoCaptureForId(interview._id)}
                       disabled={applying === interview._id}
                     >
-                      {applying === interview._id ? 'Applying...' : 'Apply Now'}
+                      <Camera size={16} style={{ marginRight: '6px' }} />
+                      {applying === interview._id ? 'Applying...' : 'Apply with Photo'}
                     </button>
                   </div>
                 </div>
@@ -372,7 +407,7 @@ export default function InterviewBrowser() {
             <div className="no-interviews">
               <Clock size={48} />
               <h3>No Applications Yet</h3>
-              <p>Browse available interviews and apply to get started.</p>
+              <p>Browse available jobs and apply to get started.</p>
             </div>
           ) : (
             <div className="interviews-grid">
@@ -388,7 +423,7 @@ export default function InterviewBrowser() {
                         <p>{app.recruiterId?.company || app.recruiterId?.email}</p>
                       </div>
                     </div>
-                    {getStatusBadge(app.applicationStatus)}
+                    {getStatusBadge(app.applicationStatus, app.status)}
                   </div>
 
                   <div className="card-body">
@@ -409,6 +444,22 @@ export default function InterviewBrowser() {
                           Applied: {new Date(app.createdAt).toLocaleDateString()}
                         </span>
                       </div>
+                      {app.status === 'completed' && app.score !== undefined && app.score !== null && (
+                        <div className="detail-row">
+                          <Award size={18} />
+                          <span style={{ fontWeight: 'bold', color: app.score >= 70 ? '#27ae60' : app.score >= 50 ? '#f39c12' : '#e74c3c' }}>
+                            Score: {app.score}/100
+                          </span>
+                        </div>
+                      )}
+                      {app.status === 'completed' && (
+                        <div className="detail-row">
+                          <CheckCircle size={18} />
+                          <span style={{ color: '#27ae60', fontWeight: '500' }}>
+                            ✅ Completed
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -418,7 +469,7 @@ export default function InterviewBrowser() {
                         className="start-btn"
                         onClick={() => window.location.href = `/candidate/interview?id=${app._id}`}
                       >
-                        Start Interview
+                        Start Assessment
                       </button>
                       <button
                         className="delete-btn-small"
@@ -433,11 +484,20 @@ export default function InterviewBrowser() {
 
                   {(app.applicationStatus === 'pending' || (app.applicationStatus === 'accepted' && app.status === 'completed') || app.status === 'completed') && (
                     <div className="card-footer">
+                      {app.status === 'completed' && (
+                        <button
+                          className="start-btn"
+                          onClick={() => window.location.href = `/interview/${app._id}/report`}
+                          style={{ background: '#3b82f6' }}
+                        >
+                          📊 View Report
+                        </button>
+                      )}
                       <button
                         className="delete-btn"
                         onClick={() => handleDelete(app._id, app.stream)}
                         disabled={deletingId === app._id || app.status === 'in-progress'}
-                        title={app.status === 'in-progress' ? 'Cannot delete in-progress interview' : app.applicationStatus === 'pending' ? 'Withdraw application' : 'Delete interview'}
+                        title={app.status === 'in-progress' ? 'Cannot delete in-progress job' : app.applicationStatus === 'pending' ? 'Withdraw application' : 'Delete job'}
                       >
                         <Trash2 size={16} />
                         {deletingId === app._id ? 'Processing...' : app.applicationStatus === 'pending' ? 'Withdraw' : 'Delete'}
@@ -549,16 +609,31 @@ export default function InterviewBrowser() {
                 <button
                   className="apply-btn"
                   onClick={() => {
+                    const id = selectedInterview._id;
                     setSelectedInterview(null);
-                    handleApply(selectedInterview._id);
+                    setPhotoCaptureForId(id);
                   }}
                   disabled={applying === selectedInterview._id}
                   style={{ flex: 1 }}
                 >
-                  {applying === selectedInterview._id ? 'Applying...' : 'Apply for this Position'}
+                  <Camera size={16} style={{ marginRight: '6px' }} />
+                  {applying === selectedInterview._id ? 'Applying...' : 'Apply with Photo'}
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Photo Capture Modal for Application */}
+      {photoCaptureForId && (
+        <div className="modal-overlay" onClick={() => setPhotoCaptureForId(null)}>
+          <div className="modal-content photo-capture-modal" onClick={e => e.stopPropagation()}>
+            <ApplicationPhotoCapture
+              interviewId={photoCaptureForId}
+              onPhotoCapture={(photo) => handleApply(photoCaptureForId, photo)}
+              onCancel={() => setPhotoCaptureForId(null)}
+            />
           </div>
         </div>
       )}

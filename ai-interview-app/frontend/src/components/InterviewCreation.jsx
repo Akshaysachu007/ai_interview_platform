@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import './InterviewCreation.css';
 
 const API_URL = import.meta.env.VITE_API_URL;
@@ -18,11 +18,29 @@ export default function InterviewCreation({ onClose, onSuccess }) {
     timeLimit: 30,
     customQuestions: ''
   });
+  const [violationThresholds, setViolationThresholds] = useState({
+    noFace: 0,
+    multipleFace: 0,
+    lookingAway: 0,
+    tabSwitch: 0,
+    voiceChange: 0,
+    aiAnswer: 0
+  });
+  const [showThresholds, setShowThresholds] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [pdfFile, setPdfFile] = useState(null);
   const [extractedQuestions, setExtractedQuestions] = useState([]);
   const [uploadingPdf, setUploadingPdf] = useState(false);
+
+  const thresholdFields = [
+    { key: 'noFace', label: 'No Face Detected' },
+    { key: 'multipleFace', label: 'Multiple Faces' },
+    { key: 'lookingAway', label: 'Looking Away' },
+    { key: 'tabSwitch', label: 'Tab Switches' },
+    { key: 'voiceChange', label: 'Voice Changes' },
+    { key: 'aiAnswer', label: 'AI Answers' }
+  ];
 
   const streams = [
     'Computer Science',
@@ -72,7 +90,7 @@ export default function InterviewCreation({ onClose, onSuccess }) {
       }
       
       setExtractedQuestions(data.questions || []);
-      alert(`✅ Successfully extracted ${data.questions.length} questions from PDF!`);
+      alert(`Successfully extracted ${data.questions.length} questions from PDF.`);
     } catch (err) {
       console.error('PDF upload error:', err);
       setError(err.message);
@@ -115,7 +133,8 @@ export default function InterviewCreation({ onClose, onSuccess }) {
           : [],
         questionCount: parseInt(formData.questionCount) || 5,
         timeLimit: parseInt(formData.timeLimit) || 30,
-        customQuestions: allCustomQuestions
+        customQuestions: allCustomQuestions,
+        violationThresholds
       };
       
       console.log('📤 Creating interview with:', {
@@ -136,10 +155,10 @@ export default function InterviewCreation({ onClose, onSuccess }) {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.message || 'Failed to create interview');
+        throw new Error(data.message || 'Failed to create job');
       }
 
-      alert(`✅ Interview created successfully!\n\n` +
+      alert(`Job created successfully.\n\n` +
             `• Total Questions: ${data.config.questionCount}\n` +
             `• Time Limit: ${data.config.timeLimit} minutes\n` +
             `• Custom Questions: ${data.config.customQuestions}\n` +
@@ -159,181 +178,225 @@ export default function InterviewCreation({ onClose, onSuccess }) {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-content" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <h2>Create New Interview</h2>
+          <div>
+            <p className="modal-eyebrow">Interview Setup</p>
+            <h2>Create New Job</h2>
+          </div>
           <button className="close-btn" onClick={onClose}>
             <X size={24} />
           </button>
         </div>
 
         <form onSubmit={handleSubmit}>
-          <div className="form-group">
-            <label htmlFor="title">Job Title</label>
-            <input
-              id="title"
-              type="text"
-              value={formData.title}
-              onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-              placeholder="e.g., Senior Software Engineer"
-            />
-          </div>
-          
-          <div className="form-group">
-            <label htmlFor="company">Company Name</label>
-            <input
-              id="company"
-              type="text"
-              value={formData.company}
-              onChange={(e) => setFormData({ ...formData, company: e.target.value })}
-              placeholder="e.g., Tech Corp Inc."
-            />
-          </div>
+          <section className="form-section">
+            <h3>Role Details</h3>
+            <div className="form-grid">
+              <div className="form-group">
+                <label htmlFor="title">Job Title</label>
+                <input
+                  id="title"
+                  type="text"
+                  value={formData.title}
+                  onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                  placeholder="e.g., Senior Software Engineer"
+                />
+              </div>
 
-          <div className="form-group">
-            <label htmlFor="stream">Stream *</label>
-            <select
-              id="stream"
-              value={formData.stream}
-              onChange={(e) => setFormData({ ...formData, stream: e.target.value })}
-              required
-            >
-              {streams.map(stream => (
-                <option key={stream} value={stream}>{stream}</option>
-              ))}
-            </select>
-          </div>
+              <div className="form-group">
+                <label htmlFor="company">Company Name</label>
+                <input
+                  id="company"
+                  type="text"
+                  value={formData.company}
+                  onChange={(e) => setFormData({ ...formData, company: e.target.value })}
+                  placeholder="e.g., Tech Corp Inc."
+                />
+              </div>
+            </div>
+            <div className="form-grid form-grid-3">
+              <div className="form-group">
+                <label htmlFor="stream">Stream *</label>
+                <select
+                  id="stream"
+                  value={formData.stream}
+                  onChange={(e) => setFormData({ ...formData, stream: e.target.value })}
+                  required
+                >
+                  {streams.map((stream) => (
+                    <option key={stream} value={stream}>{stream}</option>
+                  ))}
+                </select>
+              </div>
 
-          <div className="form-group" style = {{ color: '#666', fontSize: '0.85rem' }}>
-            <label htmlFor="difficulty">Difficulty Level *</label>
-            <select
-              id="difficulty"
-              value={formData.difficulty}
-              onChange={(e) => setFormData({ ...formData, difficulty: e.target.value })}
-              required
-            >
-              {difficulties.map(level => (
-                <option key={level} value={level}>{level}</option>
-              ))}
-            </select>
-          </div>
-          
-          <div className="form-row">
+              <div className="form-group">
+                <label htmlFor="difficulty">Difficulty Level *</label>
+                <select
+                  id="difficulty"
+                  value={formData.difficulty}
+                  onChange={(e) => setFormData({ ...formData, difficulty: e.target.value })}
+                  required
+                >
+                  {difficulties.map((level) => (
+                    <option key={level} value={level}>{level}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="timeLimit">Time Limit (minutes) *</label>
+                <input
+                  id="timeLimit"
+                  type="number"
+                  min="5"
+                  max="180"
+                  value={formData.timeLimit}
+                  onChange={(e) => setFormData({ ...formData, timeLimit: e.target.value })}
+                  required
+                />
+              </div>
+            </div>
             <div className="form-group">
-              <label htmlFor="questionCount">Number of Questions *</label>
-              <input
-                id="questionCount"
-                type="number"
-                min="1"
-                max="20"
-                value={formData.questionCount}
-                onChange={(e) => setFormData({ ...formData, questionCount: e.target.value })}
+              <label htmlFor="jobDescription">Job Description *</label>
+              <textarea
+                id="jobDescription"
+                value={formData.jobDescription}
+                onChange={(e) => setFormData({ ...formData, jobDescription: e.target.value })}
+                placeholder="Describe responsibilities, required experience, and selection expectations."
+                rows={5}
                 required
               />
-              <small style={{color: '#666', fontSize: '0.85rem'}}>
-                Total questions (AI + custom, 1-20)
+              <small className="field-hint">
+                Include responsibilities, required skills, and qualifications for better candidate matching.
               </small>
             </div>
-            
-            <div className="form-group">
-              <label htmlFor="timeLimit">Time Limit (minutes) *</label>
-              <input
-                id="timeLimit"
-                type="number"
-                min="5"
-                max="180"
-                value={formData.timeLimit}
-                onChange={(e) => setFormData({ ...formData, timeLimit: e.target.value })}
-                required
-              />
-              <small style={{color: '#666', fontSize: '0.85rem'}}>
-                Interview duration (5-180 min)
-              </small>
-            </div>
-          </div>
-          
-          <div className="form-group">
-            <label htmlFor="jobDescription">Job Description *</label>
-            <textarea
-              id="jobDescription"
-              value={formData.jobDescription}
-              onChange={(e) => setFormData({ ...formData, jobDescription: e.target.value })}
-              placeholder="Describe the role, responsibilities, and requirements. This will be used to calculate ATS scores when candidates apply with their resumes."
-              rows={6}
-              required
-            />
-            <small style={{color: '#666', fontSize: '0.85rem'}}>
-              💡 Tip: Include key skills, experience requirements, and qualifications. This helps match candidates better!
-            </small>
-          </div>
-          
-          <div className="form-group">
-            <label htmlFor="customQuestions">Custom Questions (Optional)</label>
-            <textarea
-              id="customQuestions"
-              value={formData.customQuestions}
-              onChange={(e) => setFormData({ ...formData, customQuestions: e.target.value })}
-              placeholder="Add your own questions here, one per line&#10;Example:&#10;Explain your experience with React hooks&#10;Describe a challenging project you worked on&#10;What is your approach to debugging?"
-              rows={5}
-            />
-            <small style={{color: '#666', fontSize: '0.85rem'}}>
-              ✏️ Add custom questions (one per line). These will be shuffled with AI-generated questions.
-            </small>
-          </div>
-          
-          <div className="form-group">
-            <label htmlFor="pdfUpload">Or Upload Questions from PDF (Optional)</label>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <input
-                id="pdfUpload"
-                type="file"
-                accept="application/pdf"
-                onChange={handlePdfUpload}
-                disabled={uploadingPdf}
-                style={{ flex: 1 }}
-              />
-              {uploadingPdf && <span>⏳ Extracting...</span>}
-              {extractedQuestions.length > 0 && (
-                <span style={{ color: '#28a745', fontWeight: 'bold' }}>
-                  ✅ {extractedQuestions.length} questions extracted
-                </span>
-              )}
-            </div>
-            <small style={{color: '#666', fontSize: '0.85rem'}}>
-              📄 Upload a PDF with questions. The system will automatically extract them.
-            </small>
-          </div>
-          
-          <div className="form-group">
-            <label htmlFor="requiredSkills">Required Skills</label>
-            <input
-              id="requiredSkills"
-              type="text"
-              value={formData.requiredSkills}
-              onChange={(e) => setFormData({ ...formData, requiredSkills: e.target.value })}
-              placeholder="e.g., JavaScript, React, Node.js (comma-separated)"
-            />
-          </div>
-          
-          <div className="form-group">
-            <label htmlFor="preferredSkills">Preferred Skills</label>
-            <input
-              id="preferredSkills"
-              type="text"
-              value={formData.preferredSkills}
-              onChange={(e) => setFormData({ ...formData, preferredSkills: e.target.value })}
-              placeholder="e.g., TypeScript, MongoDB, AWS (comma-separated)"
-            />
-          </div>
+          </section>
 
-          <div className="form-group">
-            <label htmlFor="description">Additional Notes (Optional)</label>
-            <textarea
-              id="description"
-              value={formData.description}
-              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-              placeholder="Add any additional information about this interview..."
-              rows={3}
-            />
-          </div>
+          <section className="form-section">
+            <h3>Questions Configuration</h3>
+            <div className="form-row">
+              <div className="form-group">
+                <label htmlFor="questionCount">Number of Questions *</label>
+                <input
+                  id="questionCount"
+                  type="number"
+                  min="1"
+                  max="20"
+                  value={formData.questionCount}
+                  onChange={(e) => setFormData({ ...formData, questionCount: e.target.value })}
+                  required
+                />
+                <small className="field-hint">Total questions (AI + custom), between 1 and 20.</small>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="customQuestions">Custom Questions (Optional)</label>
+                <textarea
+                  id="customQuestions"
+                  value={formData.customQuestions}
+                  onChange={(e) => setFormData({ ...formData, customQuestions: e.target.value })}
+                  placeholder="Add one question per line"
+                  rows={4}
+                />
+                <small className="field-hint">Each line is treated as one custom question.</small>
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="pdfUpload">Upload Questions from PDF (Optional)</label>
+              <div className="pdf-upload-row">
+                <input
+                  id="pdfUpload"
+                  type="file"
+                  accept="application/pdf"
+                  onChange={handlePdfUpload}
+                  disabled={uploadingPdf}
+                />
+                {uploadingPdf && <span className="upload-state loading">Extracting...</span>}
+                {!uploadingPdf && extractedQuestions.length > 0 && (
+                  <span className="upload-state success">{extractedQuestions.length} questions extracted</span>
+                )}
+                {!uploadingPdf && pdfFile && extractedQuestions.length === 0 && (
+                  <span className="upload-state pending">{pdfFile.name}</span>
+                )}
+              </div>
+              <small className="field-hint">Upload a PDF and the system will auto-extract interview questions.</small>
+            </div>
+          </section>
+
+          <section className="form-section">
+            <h3>Skills and Notes</h3>
+            <div className="form-grid">
+              <div className="form-group">
+                <label htmlFor="requiredSkills">Required Skills</label>
+                <input
+                  id="requiredSkills"
+                  type="text"
+                  value={formData.requiredSkills}
+                  onChange={(e) => setFormData({ ...formData, requiredSkills: e.target.value })}
+                  placeholder="e.g., JavaScript, React, Node.js"
+                />
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="preferredSkills">Preferred Skills</label>
+                <input
+                  id="preferredSkills"
+                  type="text"
+                  value={formData.preferredSkills}
+                  onChange={(e) => setFormData({ ...formData, preferredSkills: e.target.value })}
+                  placeholder="e.g., TypeScript, MongoDB, AWS"
+                />
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="description">Additional Notes (Optional)</label>
+              <textarea
+                id="description"
+                value={formData.description}
+                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                placeholder="Add any additional information about this job"
+                rows={3}
+              />
+            </div>
+          </section>
+
+          <section className="form-section thresholds-section">
+            <button
+              type="button"
+              className="threshold-toggle-btn"
+              onClick={() => setShowThresholds(!showThresholds)}
+            >
+              {showThresholds ? 'Hide' : 'Configure'} Auto-Termination Thresholds
+            </button>
+
+            {showThresholds && (
+              <div className="thresholds-panel">
+                <p className="threshold-note">
+                  Set max violations before auto-terminating an interview. Use 0 to disable a threshold.
+                </p>
+                <div className="threshold-grid">
+                  {thresholdFields.map(({ key, label }) => (
+                    <div key={key} className="threshold-item">
+                      <label>{label}</label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        value={violationThresholds[key]}
+                        onChange={(e) => setViolationThresholds((prev) => ({
+                          ...prev,
+                          [key]: Math.max(0, parseInt(e.target.value) || 0)
+                        }))}
+                        placeholder="0"
+                      />
+                    </div>
+                  ))}
+                </div>
+                <small className="field-hint">Example: Tab Switches set to 5 will terminate after 5 violations.</small>
+              </div>
+            )}
+          </section>
 
           {error && <div className="error-message">{error}</div>}
 
@@ -342,7 +405,7 @@ export default function InterviewCreation({ onClose, onSuccess }) {
               Cancel
             </button>
             <button type="submit" className="btn-primary" disabled={loading}>
-              {loading ? 'Creating...' : 'Create Interview'}
+              {loading ? 'Creating...' : 'Create Job'}
             </button>
           </div>
         </form>

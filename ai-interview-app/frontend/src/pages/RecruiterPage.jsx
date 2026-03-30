@@ -141,7 +141,7 @@ export default function RecruiterPage() {
           <div className="form-container sign-up-container">
             <form onSubmit={handleRegister}>
               <h1>Create Recruiter Account</h1>
-              <span>Register to post interviews and hire talent</span>
+              <span>Register to post jobs and hire talent</span>
               <input name="name" type="text" placeholder="Your Name" value={registerForm.name} onChange={handleRegisterChange} />
               <input name="email" type="email" placeholder="Email" value={registerForm.email} onChange={handleRegisterChange} />
               <input name="password" type="password" placeholder="Password" value={registerForm.password} onChange={handleRegisterChange} />

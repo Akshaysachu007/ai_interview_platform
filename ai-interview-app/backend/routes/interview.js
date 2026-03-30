@@ -2,6 +2,7 @@ import express from 'express';
 import Interview from '../models/Interview.js';
 import Question from '../models/Question.js';
 import AIService from '../services/aiService.js';
+import answerEvaluationService from '../services/answerEvaluationService.js';
 import auth from '../middleware/auth.js';
 
 const router = express.Router();
@@ -194,15 +195,19 @@ router.post('/start', auth, async (req, res) => {
       }
 
       // ===================================================================
-      // CHECK IDENTITY VERIFICATION IF REQUIRED
+      // IDENTITY VERIFICATION STATUS CHECK
+      // Log verification status but don't hard-block — the frontend gates
+      // the Start button behind the IdentityVerification component.
+      // If Python face matching is unavailable, blocking here permanently
+      // locks candidates out. Verification status is tracked in the DB
+      // for the recruiter's report.
       // ===================================================================
-      if (existingInterview.identityVerificationRequired && !existingInterview.identityVerificationCompleted) {
-        return res.status(403).json({
-          message: 'Identity verification required before starting this interview',
-          verificationRequired: true,
-          verificationCompleted: false,
-          hint: 'Please complete identity verification first'
-        });
+      if (existingInterview.identityVerificationRequired && 
+          !existingInterview.identityVerificationCompleted && 
+          existingInterview.candidateApplicationPhoto) {
+        console.warn(`⚠️ Interview ${interviewId}: Identity verification required but not completed. Allowing start — recruiter will see verification status in report.`);
+        existingInterview.identityVerificationSkipped = true;
+        await existingInterview.save();
       }
 
       // If interview is already in-progress, return existing questions (resume)
@@ -213,9 +218,10 @@ router.post('/start', auth, async (req, res) => {
           questions: existingInterview.questions.map(q => ({ question: q.question, category: q.category })),
           stream: existingInterview.stream,
           difficulty: existingInterview.difficulty,
-          timeLimit: existingInterview.timeLimit || 30, // Include time limit when resuming
-          questionCount: existingInterview.questions.length, // Include question count
-          currentQuestionIndex: existingInterview.currentQuestionIndex || 0
+          timeLimit: existingInterview.timeLimit || 30,
+          questionCount: existingInterview.questions.length,
+          currentQuestionIndex: existingInterview.currentQuestionIndex || 0,
+          violationThresholds: existingInterview.violationThresholds || {}
         });
       }
 
@@ -315,7 +321,8 @@ router.post('/start', auth, async (req, res) => {
         stream: existingInterview.stream,
         difficulty: existingInterview.difficulty,
         timeLimit: existingInterview.timeLimit,
-        questionCount: shuffledQuestions.length
+        questionCount: shuffledQuestions.length,
+        violationThresholds: existingInterview.violationThresholds || {}
       });
     }
 
@@ -412,11 +419,53 @@ router.post('/submit-answer', auth, async (req, res) => {
     // Detect if answer is AI-generated using REAL AI
     const aiDetection = await AIService.detectAIGeneratedAnswer(answer);
 
+    // Evaluate answer quality using LOCAL NLP (real-time per-answer scoring)
+    let answerEvaluation = null;
+    try {
+      const questionText = interview.questions[questionIndex]?.question || '';
+      answerEvaluation = answerEvaluationService.evaluateAnswer(questionText, answer, {
+        stream: interview.stream,
+        difficulty: interview.difficulty
+      });
+      console.log(`📊 Real-time NLP evaluation for Q${questionIndex + 1}: ${answerEvaluation.score}/100 (confidence: ${(answerEvaluation.confidence * 100).toFixed(0)}%)`);
+    } catch (evalError) {
+      console.error('Answer evaluation error:', evalError.message);
+    }
+
     // Update question with answer
     if (interview.questions[questionIndex]) {
       interview.questions[questionIndex].answer = answer;
       interview.questions[questionIndex].isAiGenerated = aiDetection.isAiGenerated;
       interview.questions[questionIndex].aiConfidence = aiDetection.confidence;
+
+      // Store per-question timing data
+      const now = new Date();
+      interview.questions[questionIndex].answerEndTime = now;
+      if (req.body.questionStartedAt) {
+        const startedAt = new Date(req.body.questionStartedAt);
+        interview.questions[questionIndex].answerStartTime = startedAt;
+        const durationSec = Math.round((now - startedAt) / 1000);
+        interview.questions[questionIndex].answerDuration = durationSec;
+        // Classify response speed
+        if (durationSec < 15) interview.questions[questionIndex].responseSpeed = 'Very Fast';
+        else if (durationSec < 45) interview.questions[questionIndex].responseSpeed = 'Fast';
+        else if (durationSec < 120) interview.questions[questionIndex].responseSpeed = 'Normal';
+        else if (durationSec < 240) interview.questions[questionIndex].responseSpeed = 'Slow';
+        else interview.questions[questionIndex].responseSpeed = 'Very Slow';
+      }
+      // Store word count
+      interview.questions[questionIndex].wordCount = answer.trim().split(/\s+/).length;
+
+      // Store NLP topic-based evaluation results
+      if (answerEvaluation) {
+        interview.questions[questionIndex].answerQuality = {
+          relevance: answerEvaluation.breakdown?.relevanceScore || 0,
+          completeness: answerEvaluation.breakdown?.keywordScore || 0,
+          clarity: answerEvaluation.breakdown?.structuralScore || 0,
+          technicalDepth: answerEvaluation.breakdown?.conceptGroupScore || 0,
+          overallScore: answerEvaluation.score
+        };
+      }
     }
 
     // If AI-generated, add to malpractices
@@ -438,7 +487,14 @@ router.post('/submit-answer', auth, async (req, res) => {
         isAiGenerated: aiDetection.isAiGenerated,
         confidence: aiDetection.confidence,
         warning: aiDetection.isAiGenerated ? 'This answer appears to be AI-generated' : null
-      }
+      },
+      answerEvaluation: answerEvaluation ? {
+        score: answerEvaluation.score,
+        confidence: answerEvaluation.confidence,
+        evaluationMethod: answerEvaluation.useGptFallback ? 'pending-gpt' : 'local-nlp',
+        feedback: answerEvaluation.feedback,
+        breakdown: answerEvaluation.breakdown
+      } : null
     });
 
   } catch (err) {
@@ -472,10 +528,30 @@ router.post('/report-tab-switch', auth, async (req, res) => {
     interview.tabSwitchCount += 1;
     await interview.save();
 
+    // Check if tab switch threshold is exceeded
+    const threshold = interview.violationThresholds?.tabSwitch || 0;
+    const shouldTerminate = threshold > 0 && interview.tabSwitchCount >= threshold;
+
+    if (shouldTerminate) {
+      interview.terminatedByViolation = true;
+      interview.terminationReason = `Tab switch limit exceeded (${interview.tabSwitchCount}/${threshold})`;
+      interview.status = 'completed';
+      interview.endTime = new Date();
+      interview.completedAt = new Date();
+      interview.flagged = true;
+      if (interview.startTime) {
+        interview.duration = Math.round((interview.endTime - new Date(interview.startTime)) / 60000);
+      }
+      await interview.save();
+      console.log(`🚫 Interview ${interviewId} TERMINATED — tab switch threshold exceeded (${interview.tabSwitchCount}/${threshold})`);
+    }
+
     res.json({
-      message: 'Tab switch recorded',
+      message: shouldTerminate ? 'Interview terminated due to excessive tab switches' : 'Tab switch recorded',
       totalSwitches: interview.tabSwitchCount,
-      warning: interview.tabSwitchCount > 3 ? 'Multiple tab switches detected - interview may be flagged' : null
+      warning: interview.tabSwitchCount > 3 ? 'Multiple tab switches detected - interview may be flagged' : null,
+      terminated: shouldTerminate,
+      terminationReason: shouldTerminate ? interview.terminationReason : null
     });
 
   } catch (err) {
@@ -625,6 +701,23 @@ router.post('/complete', auth, async (req, res) => {
     if (typeof interview.aiAnswersDetected !== 'number') interview.aiAnswersDetected = 0;
     if (typeof interview.noFaceDetected !== 'number') interview.noFaceDetected = 0;
     if (typeof interview.multipleFacesDetected !== 'number') interview.multipleFacesDetected = 0;
+    if (typeof interview.lookingAwayDetected !== 'number') interview.lookingAwayDetected = 0;
+
+    // Merge frontend violation counts (may be higher than backend-tracked counts)
+    const { violationCounts, terminatedByViolation, terminationReason } = req.body;
+    if (violationCounts) {
+      interview.noFaceDetected = Math.max(interview.noFaceDetected, violationCounts.noFaceCount || 0);
+      interview.multipleFacesDetected = Math.max(interview.multipleFacesDetected, violationCounts.multipleFaceCount || 0);
+      interview.lookingAwayDetected = Math.max(interview.lookingAwayDetected, violationCounts.lookingAwayCount || 0);
+    }
+
+    // Mark if terminated by violation threshold
+    if (terminatedByViolation) {
+      interview.terminatedByViolation = true;
+      interview.terminationReason = terminationReason || 'Violation threshold exceeded';
+      interview.flagged = true;
+      console.log(`🚫 Interview ${interviewId} terminated by violation: ${interview.terminationReason}`);
+    }
 
     interview.endTime = new Date();
     interview.completedAt = new Date();
@@ -812,7 +905,8 @@ router.post('/complete', auth, async (req, res) => {
         voiceChanges: interview.voiceChangesDetected || 0,
         aiAnswers: interview.aiAnswersDetected || 0,
         noFaceDetected: interview.noFaceDetected || 0,
-        multipleFacesDetected: interview.multipleFacesDetected || 0
+        multipleFacesDetected: interview.multipleFacesDetected || 0,
+        lookingAwayDetected: interview.lookingAwayDetected || 0
       },
       flagged: interview.status === 'flagged' || interview.flagged === true
     };
@@ -919,7 +1013,19 @@ router.get('/:interviewId', auth, async (req, res) => {
       }
     }
 
-    res.json(interview);
+    // Strip ATS score and sensitive data from candidate view
+    const interviewData = interview.toObject();
+    
+    // If the viewer is the candidate (not the recruiter), hide ATS data
+    const isCandidate = interview.candidateId._id.toString() === req.candidate.id;
+    if (isCandidate) {
+      delete interviewData.atsScore;
+      delete interviewData.applicationScores;
+      delete interviewData.candidateApplicationPhoto;
+      delete interviewData.resumeText;
+    }
+
+    res.json(interviewData);
 
   } catch (err) {
     console.error('Get interview error:', err);
@@ -1167,47 +1273,143 @@ router.get('/:interviewId/report', auth, async (req, res) => {
       return res.status(403).json({ message: 'Unauthorized to view this report' });
     }
 
-    // Calculate detailed analytics
+    const viewerRole = isRecruiter ? 'recruiter' : 'candidate';
+
+    // === CALCULATION HELPERS ===
     const totalQuestions = interview.questions.length;
-    const answeredQuestions = interview.questions.filter(q => q.answer).length;
+    const answeredQuestions = interview.questions.filter(q => q.answer && q.answer.trim()).length;
     const aiGeneratedAnswers = interview.questions.filter(q => q.isAiGenerated).length;
-    
-    // Malpractice summary
+
+    // Malpractice by type
     const malpracticeByType = {};
     interview.malpractices.forEach(m => {
       if (!malpracticeByType[m.type]) {
         malpracticeByType[m.type] = { count: 0, severity: { low: 0, medium: 0, high: 0 } };
       }
       malpracticeByType[m.type].count++;
-      if (m.severity) {
-        malpracticeByType[m.type].severity[m.severity]++;
-      }
+      if (m.severity) malpracticeByType[m.type].severity[m.severity]++;
     });
 
-    // Question-wise analysis
-    const questionAnalysis = interview.questions.map((q, index) => ({
-      questionNumber: index + 1,
-      question: q.question,
-      answered: !!q.answer,
-      answerLength: q.answer ? q.answer.length : 0,
-      isAiGenerated: q.isAiGenerated || false,
-      aiConfidence: q.aiConfidence || 0,
-      category: q.category || 'General'
-    }));
+    // === VIOLATION DEDUCTION TABLE ===
+    const noFace = interview.noFaceDetected || 0;
+    const multiFace = interview.multipleFacesDetected || 0;
+    const lookingAway = interview.lookingAwayDetected || 0;
+    const tabSwitches = interview.tabSwitchCount || 0;
+    const voiceChanges = interview.voiceChangesDetected || 0;
+    const aiAnswers = interview.aiAnswersDetected || 0;
 
-    // Performance metrics
-    const completionRate = totalQuestions > 0 
-      ? Math.round((answeredQuestions / totalQuestions) * 100) 
+    // Per-violation deduction rates
+    const violationDeductions = [
+      { type: 'No Face Detected', count: noFace, ratePerIncident: 2, maxDeduction: 15, severity: noFace > 5 ? 'High' : noFace > 2 ? 'Medium' : 'Low' },
+      { type: 'Multiple Faces Detected', count: multiFace, ratePerIncident: 3, maxDeduction: 20, severity: multiFace > 3 ? 'High' : multiFace > 1 ? 'Medium' : 'Low' },
+      { type: 'Looking Away', count: lookingAway, ratePerIncident: 1.5, maxDeduction: 12, severity: lookingAway > 8 ? 'High' : lookingAway > 3 ? 'Medium' : 'Low' },
+      { type: 'Tab Switches', count: tabSwitches, ratePerIncident: 3, maxDeduction: 15, severity: tabSwitches > 3 ? 'High' : tabSwitches > 1 ? 'Medium' : 'Low' },
+      { type: 'Voice Anomalies', count: voiceChanges, ratePerIncident: 4, maxDeduction: 15, severity: voiceChanges > 2 ? 'High' : voiceChanges > 0 ? 'Medium' : 'Low' },
+      { type: 'AI-Generated Answers', count: aiAnswers, ratePerIncident: 8, maxDeduction: 25, severity: aiAnswers > 1 ? 'High' : aiAnswers > 0 ? 'Medium' : 'Low' }
+    ];
+
+    let totalViolationDeduction = 0;
+    violationDeductions.forEach(v => {
+      v.deduction = Math.min(+(v.count * v.ratePerIncident).toFixed(1), v.maxDeduction);
+      totalViolationDeduction += v.deduction;
+    });
+    totalViolationDeduction = Math.min(totalViolationDeduction, 40); // cap
+
+    // === PER-QUESTION DETAILED EVALUATION TABLE ===
+    const questionEvaluations = interview.questions.map((q, index) => {
+      const hasAnswer = !!(q.answer && q.answer.trim());
+      const quality = q.answerQuality || {};
+
+      return {
+        questionNumber: index + 1,
+        question: q.question,
+        answer: q.answer || '',
+        answered: hasAnswer,
+        wordCount: q.wordCount || (hasAnswer ? q.answer.trim().split(/\s+/).length : 0),
+        responseSpeed: q.responseSpeed || 'N/A',
+        answerDuration: q.answerDuration || null,
+
+        // Per-question quality scores (0-100)
+        relevanceScore: quality.relevance || 0,
+        completenessScore: quality.completeness || 0,
+        clarityScore: quality.clarity || 0,
+        technicalDepthScore: quality.technicalDepth || 0,
+        overallScore: quality.overallScore || 0,
+
+        // AI detection for this question
+        isAiGenerated: q.isAiGenerated || false,
+        aiConfidence: q.aiConfidence || 0,
+
+        // Category
+        category: q.category || 'General'
+      };
+    });
+
+    // Average quality score across answered questions
+    const answeredWithScores = questionEvaluations.filter(q => q.answered && q.overallScore > 0);
+    const avgQuestionScore = answeredWithScores.length > 0
+      ? +(answeredWithScores.reduce((s, q) => s + q.overallScore, 0) / answeredWithScores.length).toFixed(1)
       : 0;
-    
-    const integrityScore = 100 - Math.min(
-      (interview.tabSwitchCount * 5) + 
-      (aiGeneratedAnswers * 10) + 
-      (interview.malpractices.filter(m => m.severity === 'high').length * 15),
-      100
-    );
 
+    // === SCORE BREAKDOWN TABLE ===
+    const completionRate = totalQuestions > 0 ? Math.round((answeredQuestions / totalQuestions) * 100) : 0;
+    const answerQualityContribution = +(avgQuestionScore * 0.50).toFixed(1);
+    const completionContribution = +(completionRate * 0.10).toFixed(1);
+
+    // Tone contribution
+    const tone = interview.enhancedEvaluation?.toneAnalysis || {};
+    const avgTone = typeof tone.professionalism === 'number'
+      ? +((tone.professionalism + (tone.confidence || 0) + (tone.clarity || 0) + (tone.articulation || 0)) / 4).toFixed(1)
+      : 0;
+    const toneContribution = +(avgTone * 0.15).toFixed(1);
+
+    // Timing contribution
+    const paceAnalysis = interview.enhancedEvaluation?.paceAnalysis || 'N/A';
+    let timingBase = 70;
+    if (paceAnalysis === 'Well-paced') timingBase = 90;
+    else if (paceAnalysis === 'Rushed') timingBase = 55;
+    const timingContribution = +(timingBase * 0.05).toFixed(1);
+
+    // Integrity contribution
+    const rawIntegrity = Math.max(0, 100 - totalViolationDeduction * 2.5);
+    const integrityContribution = +(rawIntegrity * 0.20).toFixed(1);
+    const integrityScore = Math.round(rawIntegrity);
+
+    const computedScoreBeforeViolation = +(answerQualityContribution + completionContribution + toneContribution + timingContribution + integrityContribution).toFixed(1);
+
+    const scoreBreakdownTable = [
+      { factor: 'Answer Quality', weight: '50%', rawScore: avgQuestionScore, contribution: answerQualityContribution, description: 'Average NLP-evaluated score across answered questions' },
+      { factor: 'Completion Rate', weight: '10%', rawScore: completionRate, contribution: completionContribution, description: `${answeredQuestions}/${totalQuestions} questions answered` },
+      { factor: 'Communication & Tone', weight: '15%', rawScore: +avgTone.toFixed(0), contribution: toneContribution, description: tone.overallTone || 'N/A' },
+      { factor: 'Timing & Pace', weight: '5%', rawScore: timingBase, contribution: timingContribution, description: paceAnalysis },
+      { factor: 'Integrity (Violations)', weight: '20%', rawScore: integrityScore, contribution: integrityContribution, description: totalViolationDeduction > 0 ? `${totalViolationDeduction} pts deducted for violations` : 'Clean – No violations' }
+    ];
+
+    // === STRENGTHS / WEAKNESSES from AI evaluation data ===
+    const strengths = Array.isArray(interview.pros) && interview.pros.length > 0
+      ? interview.pros
+      : [];
+    const weaknesses = Array.isArray(interview.cons) && interview.cons.length > 0
+      ? interview.cons
+      : [];
+
+    // Auto-generate extras
+    if (completionRate === 100 && !strengths.includes('Completed all questions')) strengths.push('Completed all questions');
+    if (integrityScore >= 90 && !strengths.includes('High integrity maintained')) strengths.push('High integrity maintained throughout the assessment');
+    if (avgQuestionScore >= 75) strengths.push(`Strong average answer quality (${avgQuestionScore}/100)`);
+
+    if (tabSwitches > 3) weaknesses.push(`Excessive tab switching (${tabSwitches} times)`);
+    if (noFace > 5) weaknesses.push(`Frequent absence from camera (${noFace} incidents)`);
+    if (lookingAway > 5) weaknesses.push(`Frequent looking away (${lookingAway} incidents)`);
+    if (aiAnswers > 0) weaknesses.push(`AI-generated answers detected (${aiAnswers})`);
+    if (completionRate < 100) weaknesses.push(`Didn't answer all questions (${answeredQuestions}/${totalQuestions})`);
+
+    const improvementSuggestions = interview.enhancedEvaluation?.improvementSuggestions || [];
+    const detailedFeedback = interview.enhancedEvaluation?.detailedFeedback || [];
+
+    // === FINAL REPORT ===
     const report = {
+      viewerRole,
       interviewId: interview._id,
       candidateName: interview.candidateId.name,
       candidateEmail: interview.candidateId.email,
@@ -1215,74 +1417,73 @@ router.get('/:interviewId/report', auth, async (req, res) => {
       recruiterCompany: interview.recruiterId.company || 'N/A',
       stream: interview.stream,
       difficulty: interview.difficulty,
+      jobDescription: interview.jobDescription || '',
       isMock: interview.applicationStatus === 'mock',
-      
-      // Status and scores
+
+      // Status & scores
       status: interview.status,
       finalScore: interview.score || 0,
       integrityScore,
       completionRate,
+      recommendation: interview.recommendation || 'N/A',
+      overallAssessment: interview.overallAssessment || '',
+      aiConfidenceLevel: interview.aiConfidenceLevel || 0,
       flagged: interview.flagged || false,
-      
+
       // Time metrics
-      startTime: interview.startedAt,
-      endTime: interview.completedAt,
+      startTime: interview.startedAt || interview.startTime,
+      endTime: interview.completedAt || interview.endTime,
       duration: interview.duration,
-      
-      // Question analysis
+
+      // === TABLES ===
+
+      // 1. Per-question evaluation table
+      questionEvaluations,
       totalQuestions,
       answeredQuestions,
-      questionAnalysis,
-      
-      // Malpractice summary
-      totalMalpractices: interview.malpractices.length,
-      tabSwitches: interview.tabSwitchCount || 0,
-      aiDetections: aiGeneratedAnswers,
-      voiceChanges: interview.voiceChangesDetected || 0,
-      faceViolations: interview.malpractices.filter(m => 
-        m.type === 'face_not_detected' || m.type === 'multiple_faces'
-      ).length,
-      noFaceDetected: interview.noFaceDetected || 0,
-      multipleFacesDetected: interview.multipleFacesDetected || 0,
-      malpracticeByType,
-      
-      // Detailed malpractices
-      malpractices: interview.malpractices.map(m => ({
-        type: m.type,
-        detectedAt: m.detectedAt,
-        severity: m.severity,
-        details: m.details
-      })),
-      
-      // Recommendations
-      strengths: [],
-      weaknesses: [],
-      recommendations: []
-    };
+      avgQuestionScore,
 
-    // Generate AI-powered recommendations
-    if (report.finalScore >= 80) {
-      report.strengths.push('Excellent overall performance');
-    }
-    if (report.integrityScore >= 90) {
-      report.strengths.push('High integrity maintained throughout');
-    }
-    if (report.completionRate === 100) {
-      report.strengths.push('Completed all questions');
-    }
-    
-    if (report.tabSwitches > 3) {
-      report.weaknesses.push('Multiple tab switches detected');
-      report.recommendations.push('Focus on the interview window and avoid switching tabs');
-    }
-    if (report.aiDetections > 0) {
-      report.weaknesses.push('AI-generated answers detected');
-      report.recommendations.push('Provide original, authentic answers in your own words');
-    }
-    if (report.completionRate < 100) {
-      report.weaknesses.push('Not all questions were answered');
-      report.recommendations.push('Manage time better to answer all questions');
-    }
+      // 2. Score breakdown table (how final score was computed)
+      scoreBreakdownTable,
+      computedScore: computedScoreBeforeViolation,
+
+      // 3. Violation deduction table
+      violationDeductions,
+      totalViolationDeduction: Math.min(totalViolationDeduction, 40),
+
+      // Raw violation counts
+      tabSwitches,
+      voiceChanges,
+      aiDetections: aiAnswers,
+      noFaceDetected: noFace,
+      multipleFacesDetected: multiFace,
+      lookingAwayDetected: lookingAway,
+      totalMalpractices: interview.malpractices.length,
+      faceViolations: noFace + multiFace + lookingAway,
+      malpracticeByType,
+
+      // Enhanced evaluation metrics
+      enhancedEvaluation: interview.enhancedEvaluation || null,
+      scoreBreakdown: interview.scoreBreakdown || null,
+      sentimentAnalysis: interview.sentimentAnalysis || null,
+
+      // Strengths / Weaknesses / Feedback
+      strengths,
+      weaknesses,
+      improvementSuggestions,
+      detailedFeedback,
+      recommendations: improvementSuggestions.length > 0 ? improvementSuggestions : [],
+
+      // Termination info
+      terminatedByViolation: interview.terminatedByViolation || false,
+      terminationReason: interview.terminationReason || '',
+
+      // Identity verification
+      identityVerificationRequired: interview.identityVerificationRequired || false,
+      identityVerificationCompleted: interview.identityVerificationCompleted || false,
+      identityVerificationSkipped: interview.identityVerificationSkipped || false,
+      identityVerificationData: interview.identityVerificationData || null
+    };
 
     res.json(report);
   } catch (err) {

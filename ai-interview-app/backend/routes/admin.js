@@ -4,21 +4,24 @@ import jwt from 'jsonwebtoken';
 import Admin from '../models/Admin.js';
 import Recruiter from '../models/Recruiter.js';
 import Candidate from '../models/Candidate.js';
+import Interview from '../models/Interview.js';
 import SubscriptionPricing from '../models/SubscriptionPricing.js';
 import SystemLog from '../models/SystemLog.js';
 
 const router = express.Router();
 
 // Middleware to verify JWT
+const JWT_SECRET = process.env.JWT_SECRET || 'supersecretkey';
 const auth = (req, res, next) => {
   const token = req.header('Authorization')?.replace('Bearer ', '');
   if (!token) return res.status(401).json({ message: 'No token provided' });
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_jwt_secret');
+    const decoded = jwt.verify(token, JWT_SECRET);
     req.adminId = decoded.id;
     next();
   } catch (err) {
-    res.status(401).json({ message: 'Invalid token' });
+    console.error('Admin auth error:', err.message);
+    res.status(401).json({ message: 'Invalid token. Please log in again.' });
   }
 };
 
@@ -59,7 +62,7 @@ router.post('/login', async (req, res) => {
     console.log('Password valid:', valid);
     if (!valid) return res.status(400).json({ message: 'Invalid credentials' });
     
-    const token = jwt.sign({ id: admin._id }, process.env.JWT_SECRET || 'your_jwt_secret', { expiresIn: '7d' });
+    const token = jwt.sign({ id: admin._id }, JWT_SECRET, { expiresIn: '7d' });
     
     await createLog('Admin Login', admin._id, admin._id, 'admin', `Admin ${admin.name} logged in`);
     
@@ -262,6 +265,11 @@ router.get('/stats', auth, async (req, res) => {
       createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
     });
     
+    const totalInterviews = await Interview.countDocuments();
+    const activeInterviews = await Interview.countDocuments({ status: 'in-progress' });
+    const completedInterviews = await Interview.countDocuments({ status: 'completed' });
+    const flaggedInterviews = await Interview.countDocuments({ flagged: true });
+    
     res.json({
       totalCandidates,
       totalRecruiters,
@@ -270,8 +278,45 @@ router.get('/stats', auth, async (req, res) => {
       subscribedRecruiters,
       weeklySubscribers,
       monthlySubscribers,
-      recentLogs
+      recentLogs,
+      totalInterviews,
+      activeInterviews,
+      completedInterviews,
+      flaggedInterviews
     });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// Get all interviews (admin view - connected with candidates and recruiters)
+router.get('/interviews', auth, async (req, res) => {
+  try {
+    const interviews = await Interview.find()
+      .populate('candidateId', 'name email stream skills')
+      .populate('recruiterId', 'name email companyName')
+      .sort({ createdAt: -1 });
+
+    const mapped = interviews.map(i => ({
+      _id: i._id,
+      candidateName: i.candidateId?.name || i.candidateName || 'Unassigned',
+      candidateEmail: i.candidateId?.email || '',
+      recruiterName: i.recruiterId?.name || 'Unknown',
+      recruiterCompany: i.recruiterId?.companyName || '',
+      stream: i.stream,
+      difficulty: i.difficulty,
+      status: i.status,
+      applicationStatus: i.applicationStatus,
+      score: i.score,
+      flagged: i.flagged,
+      questionsCount: i.questions?.length || 0,
+      answeredCount: i.questions?.filter(q => q.answer).length || 0,
+      createdAt: i.createdAt,
+      updatedAt: i.updatedAt,
+      completedAt: i.completedAt
+    }));
+
+    res.json(mapped);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

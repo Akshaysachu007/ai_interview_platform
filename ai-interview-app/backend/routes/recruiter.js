@@ -186,7 +186,8 @@ router.post('/create-interview', auth, async (req, res) => {
       preferredSkills,
       questionCount,
       timeLimit,
-      customQuestions // Array of {question: string, addedBy: string}
+      customQuestions, // Array of {question: string, addedBy: string}
+      violationThresholds // { noFace, multipleFace, lookingAway, tabSwitch, voiceChange, aiAnswer }
     } = req.body;
     
     if (!stream || !difficulty) {
@@ -227,6 +228,14 @@ router.post('/create-interview', auth, async (req, res) => {
         recruiterAdded: processedCustomQuestions.filter(q => q.addedBy === 'recruiter').length,
         pdfExtracted: processedCustomQuestions.filter(q => q.addedBy === 'pdf').length,
         aiGenerated: 0 // Will be set when interview starts
+      },
+      violationThresholds: {
+        noFace: Math.max(0, parseInt(violationThresholds?.noFace) || 0),
+        multipleFace: Math.max(0, parseInt(violationThresholds?.multipleFace) || 0),
+        lookingAway: Math.max(0, parseInt(violationThresholds?.lookingAway) || 0),
+        tabSwitch: Math.max(0, parseInt(violationThresholds?.tabSwitch) || 0),
+        voiceChange: Math.max(0, parseInt(violationThresholds?.voiceChange) || 0),
+        aiAnswer: Math.max(0, parseInt(violationThresholds?.aiAnswer) || 0)
       }
     });
 
@@ -351,6 +360,7 @@ router.post('/extract-questions-from-pdf', auth, upload.single('pdf'), async (re
 router.get('/my-interviews', auth, async (req, res) => {
   try {
     const interviews = await Interview.find({ recruiterId: req.recruiterId })
+      .select('-atsScore -applicationScores')
       .populate('candidateId', 'name email')
       .sort({ createdAt: -1 });
 
@@ -365,6 +375,7 @@ router.get('/my-interviews', auth, async (req, res) => {
 router.get('/interviews', auth, async (req, res) => {
   try {
     const interviews = await Interview.find({ recruiterId: req.recruiterId })
+      .select('-atsScore -applicationScores')
       .populate('candidateId', 'name email')
       .sort({ createdAt: -1 });
 
@@ -641,7 +652,10 @@ router.get('/ai-evaluations', auth, async (req, res) => {
         tabSwitches: interview.tabSwitchCount || 0,
         aiAnswers: interview.aiAnswersDetected || 0,
         voiceChanges: interview.voiceChangesDetected || 0,
-        faceViolations: (interview.noFaceDetected || 0) + (interview.multipleFacesDetected || 0)
+        noFaceDetected: interview.noFaceDetected || 0,
+        multipleFacesDetected: interview.multipleFacesDetected || 0,
+        lookingAwayDetected: interview.lookingAwayDetected || 0,
+        faceViolations: (interview.noFaceDetected || 0) + (interview.multipleFacesDetected || 0) + (interview.lookingAwayDetected || 0)
       },
       
       // Questions Summary
@@ -652,8 +666,7 @@ router.get('/ai-evaluations', auth, async (req, res) => {
           .reduce((sum, q) => sum + q.wordCount, 0) / Math.max(1, interview.questions?.filter(q => q.answer).length || 1) || 0
       },
       
-      // ATS Score (if available)
-      atsScore: interview.atsScore
+      // ATS Score removed from response for privacy
     }));
 
     // Calculate summary statistics

@@ -1,0 +1,233 @@
+.interview-overview {
+  padding: 20px;
+}
+
+.overview-header {
+  margin-bottom: 20px;
+}
+
+.overview-header h2 {
+  margin-bottom: 15px;
+  color: #1a1a2e;
+}
+
+.overview-summary {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+
+.summary-item {
+  background: white;
+  border: 2px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 16px 24px;
+  text-align: center;
+  min-width: 120px;
+}
+
+.summary-item.blue { border-color: #3b82f6; background: #eff6ff; }
+.summary-item.green { border-color: #22c55e; background: #f0fdf4; }
+.summary-item.red { border-color: #ef4444; background: #fef2f2; }
+
+.summary-count {
+  display: block;
+  font-size: 1.8rem;
+  font-weight: 700;
+  color: #1a1a2e;
+}
+
+.summary-label {
+  font-size: 0.85rem;
+  color: #64748b;
+  font-weight: 500;
+}
+
+.interview-overview .header-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.interview-overview .search-input {
+  width: 100%;
+  max-width: 400px;
+  padding: 10px 16px;
+  border: 2px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  transition: border-color 0.2s;
+}
+
+.interview-overview .search-input:focus {
+  outline: none;
+  border-color: #667eea;
+}
+
+.interview-overview .filter-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.interview-overview .filter-buttons button {
+  padding: 8px 16px;
+  border: 2px solid #e2e8f0;
+  background: white;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.interview-overview .filter-buttons button.active {
+  background: #667eea;
+  color: white;
+  border-color: #667eea;
+}
+
+.interview-overview .filter-buttons button:hover:not(.active) {
+  border-color: #667eea;
+  color: #667eea;
+}
+
+.interview-overview .no-data {
+  text-align: center;
+  padding: 40px;
+  color: #94a3b8;
+  font-size: 1.1rem;
+}
+
+.interviews-table {
+  overflow-x: auto;
+}
+
+.interviews-table table {
+  width: 100%;
+  border-collapse: collapse;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.interviews-table th {
+  background: #f8fafc;
+  padding: 14px 16px;
+  text-align: left;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.interviews-table td {
+  padding: 14px 16px;
+  border-top: 1px solid #f1f5f9;
+  font-size: 0.95rem;
+}
+
+.interviews-table tr:hover {
+  background: #f8fafc;
+}
+
+.cell-with-avatar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cell-with-avatar div {
+  display: flex;
+  flex-direction: column;
+}
+
+.primary-text {
+  font-weight: 500;
+  color: #1e293b;
+}
+
+.secondary-text {
+  font-size: 0.8rem;
+  color: #94a3b8;
+}
+
+.avatar-sm {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-weight: 600;
+  font-size: 0.85rem;
+  flex-shrink: 0;
+}
+
+.avatar-sm.candidate-bg {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+.avatar-sm.recruiter-bg {
+  background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+}
+
+.interview-overview .stream-badge {
+  background: #eef2ff;
+  color: #4f46e5;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.difficulty-badge {
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.difficulty-badge.easy { background: #dcfce7; color: #16a34a; }
+.difficulty-badge.medium { background: #fef9c3; color: #ca8a04; }
+.difficulty-badge.hard { background: #fee2e2; color: #dc2626; }
+
+.interview-overview .status-badge {
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.interview-overview .status-badge.blue { background: #dbeafe; color: #2563eb; }
+.interview-overview .status-badge.green { background: #dcfce7; color: #16a34a; }
+.interview-overview .status-badge.gray { background: #f1f5f9; color: #64748b; }
+.interview-overview .status-badge.red { background: #fee2e2; color: #dc2626; }
+
+.score-cell .score {
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.score.high { color: #16a34a; }
+.score.mid { color: #ca8a04; }
+.score.low { color: #dc2626; }
+
+.app-status {
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+.app-status.open { background: #dbeafe; color: #2563eb; }
+.app-status.pending { background: #fef9c3; color: #ca8a04; }
+.app-status.accepted { background: #dcfce7; color: #16a34a; }
+.app-status.rejected { background: #fee2e2; color: #dc2626; }
+.app-status.mock { background: #f3e8ff; color: #7c3aed; }

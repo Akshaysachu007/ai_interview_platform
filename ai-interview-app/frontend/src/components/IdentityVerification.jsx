@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+﻿import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
 import * as tf from '@tensorflow/tfjs';
 import * as blazeface from '@tensorflow-models/blazeface';
@@ -7,21 +7,26 @@ import './IdentityVerification.css';
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
 const IdentityVerification = ({ interviewId, onVerificationComplete }) => {
-  const [verificationStep, setVerificationStep] = useState('check'); // check, capture, verify, complete
+  // Steps: 'loading' -> 'verify' -> 'matching' -> 'result' (or 'no-photo' if no application photo)
+  const [step, setStep] = useState('loading');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
-  const [verificationStatus, setVerificationStatus] = useState(null);
-  const [hasReferencePhoto, setHasReferencePhoto] = useState(false);
+  const [referencePhoto, setReferencePhoto] = useState(null);
+  const [capturedPhoto, setCapturedPhoto] = useState(null);
   const [webcamActive, setWebcamActive] = useState(false);
   const [faceDetected, setFaceDetected] = useState(false);
-  const [countdown, setCountdown] = useState(null);
   const [matchScore, setMatchScore] = useState(null);
+  const [matchResult, setMatchResult] = useState(null);
+  const [verifyProgress, setVerifyProgress] = useState(0);
+  const [failCount, setFailCount] = useState(0);
   
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
   const faceModelRef = useRef(null);
+  const detectIntervalRef = useRef(null);
+  const webcamActiveRef = useRef(false);
 
   const token = localStorage.getItem('candidateToken');
   const api = axios.create({
@@ -29,72 +34,110 @@ const IdentityVerification = ({ interviewId, onVerificationComplete }) => {
     headers: { Authorization: `Bearer ${token}` }
   });
 
-  // Check verification status on mount
+  // Keep ref in sync
+  useEffect(() => { webcamActiveRef.current = webcamActive; }, [webcamActive]);
+
+  // Initialize on mount
   useEffect(() => {
-    checkVerificationStatus();
-    loadFaceDetectionModel();
+    let cancelled = false;
+    
+    const init = async () => {
+      // Load BlazeFace in background — don't block on it (CDN can timeout for 30+ seconds)
+      loadFaceModel();
+      
+      const statusData = await checkStatus();
+      
+      if (cancelled) return;
+      if (!statusData) return;
+      
+      if (statusData.verificationCompleted) {
+        setStep('result');
+        setMatchResult('pass');
+        setMessage('Identity already verified!');
+        setTimeout(() => onVerificationComplete?.(), 1000);
+        return;
+      }
+      
+      if (!statusData.verificationRequired) {
+        setMessage('Verification not required');
+        setTimeout(() => onVerificationComplete?.(), 500);
+        return;
+      }
+      
+      if (statusData.hasReferencePhoto && statusData.referencePhoto) {
+        setReferencePhoto(statusData.referencePhoto);
+        setStep('verify');
+      } else {
+        // No application photo — skip verification and proceed
+        setStep('no-photo');
+        setTimeout(() => onVerificationComplete?.(), 1500);
+      }
+    };
+    
+    init();
     
     return () => {
+      cancelled = true;
       stopWebcam();
+      if (detectIntervalRef.current) clearInterval(detectIntervalRef.current);
     };
   }, [interviewId]);
 
-  const loadFaceDetectionModel = async () => {
+  // Auto-start webcam when step changes to 'verify'
+  useEffect(() => {
+    if (step === 'verify' && !webcamActiveRef.current) {
+      startWebcam();
+    }
+  }, [step]);
+
+  // Assign stream to video element once webcamActive state causes <video> to render
+  useEffect(() => {
+    if (webcamActive && videoRef.current && streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      videoRef.current.onloadeddata = () => {
+        console.log('✅ IV: Video data loaded, starting face detection');
+        startFaceDetection();
+      };
+    }
+  }, [webcamActive]);
+
+  const loadFaceModel = async () => {
     try {
       await tf.ready();
       const model = await blazeface.load();
       faceModelRef.current = model;
-      console.log('✅ Face detection model loaded for verification');
+      console.log('Face detection model loaded for verification');
     } catch (err) {
-      console.error('Model loading error:', err);
+      console.warn('⚠️ BlazeFace model failed to load (CDN unreachable). Face detection disabled, capture still allowed.', err.message);
+      // Model failed to load — allow capture without client-side face detection
+      // Backend will do real face matching validation anyway
+      faceModelRef.current = null;
+      setFaceDetected(true);
     }
   };
 
-  const checkVerificationStatus = async () => {
-    setLoading(true);
+  const checkStatus = async () => {
     try {
       const response = await api.get(`/identity-verification/status/${interviewId}`);
-      const data = response.data;
-      
-      setVerificationStatus(data);
-      setHasReferencePhoto(data.hasReferencePhoto);
-
-      if (data.verificationCompleted) {
-        setVerificationStep('complete');
-        setMessage('✅ Identity already verified!');
-        setTimeout(() => {
-          if (onVerificationComplete) onVerificationComplete();
-        }, 2000);
-      } else if (!data.verificationRequired) {
-        setMessage('This interview does not require identity verification');
-        setTimeout(() => {
-          if (onVerificationComplete) onVerificationComplete();
-        }, 2000);
-      } else {
-        setVerificationStep(data.hasReferencePhoto ? 'capture' : 'reference');
-      }
+      return response.data;
     } catch (err) {
       setError('Failed to check verification status');
       console.error(err);
-    } finally {
-      setLoading(false);
+      return null;
     }
   };
 
   const startWebcam = async () => {
+    if (webcamActiveRef.current) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { width: 640, height: 480, facingMode: 'user' }
       });
       
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        streamRef.current = stream;
-        setWebcamActive(true);
-        
-        // Start face detection
-        setTimeout(() => detectFace(), 500);
-      }
+      // Save stream to ref first, then set state — useEffect will assign srcObject
+      streamRef.current = stream;
+      setWebcamActive(true);
+      webcamActiveRef.current = true;
     } catch (err) {
       console.error('Webcam error:', err);
       setError('Could not access camera. Please allow camera permissions.');
@@ -102,6 +145,10 @@ const IdentityVerification = ({ interviewId, onVerificationComplete }) => {
   };
 
   const stopWebcam = () => {
+    if (detectIntervalRef.current) {
+      clearInterval(detectIntervalRef.current);
+      detectIntervalRef.current = null;
+    }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;
@@ -110,358 +157,365 @@ const IdentityVerification = ({ interviewId, onVerificationComplete }) => {
       videoRef.current.srcObject = null;
     }
     setWebcamActive(false);
+    webcamActiveRef.current = false;
   };
 
-  const detectFace = async () => {
-    if (!faceModelRef.current || !videoRef.current || !canvasRef.current) {
-      setTimeout(() => detectFace(), 500);
+  const startFaceDetection = () => {
+    if (detectIntervalRef.current) clearInterval(detectIntervalRef.current);
+    
+    // If model didn't load, skip detection — allow capture anyway
+    if (!faceModelRef.current) {
+      setFaceDetected(true);
       return;
     }
-
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-
-    if (video.readyState === 4) {
-      const predictions = await faceModelRef.current.estimateFaces(video, false);
+    
+    detectIntervalRef.current = setInterval(async () => {
+      if (!faceModelRef.current || !videoRef.current) return;
       
-      // Clear canvas
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const video = videoRef.current;
+      if (video.readyState !== 4) return;
       
-      if (predictions.length === 1) {
-        setFaceDetected(true);
+      try {
+        const predictions = await faceModelRef.current.estimateFaces(video, false);
         
-        // Draw face box
-        const face = predictions[0];
-        ctx.strokeStyle = '#00ff00';
-        ctx.lineWidth = 3;
-        ctx.strokeRect(
-          face.topLeft[0],
-          face.topLeft[1],
-          face.bottomRight[0] - face.topLeft[0],
-          face.bottomRight[1] - face.topLeft[1]
-        );
-        
-        // Draw text
-        ctx.fillStyle = '#00ff00';
-        ctx.font = '16px Arial';
-        ctx.fillText('Face Detected ✓', 10, 30);
-      } else if (predictions.length === 0) {
-        setFaceDetected(false);
-        ctx.fillStyle = '#ff0000';
-        ctx.font = '16px Arial';
-        ctx.fillText('No Face Detected', 10, 30);
-      } else {
-        setFaceDetected(false);
-        ctx.fillStyle = '#ff9900';
-        ctx.font = '16px Arial';
-        ctx.fillText('Multiple Faces - Only 1 Allowed', 10, 30);
-      }
-    }
-
-    // Continue detection
-    if (webcamActive && verificationStep !== 'complete') {
-      setTimeout(() => detectFace(), 500);
-    }
-  };
-
-  const capturePhoto = () => {
-    if (!videoRef.current || !canvasRef.current) return null;
-
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-
-    // Draw current video frame to canvas
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-    // Convert to base64
-    return canvas.toDataURL('image/jpeg', 0.8);
-  };
-
-  const handleCaptureReference = async () => {
-    if (!faceDetected) {
-      setError('Please ensure your face is clearly visible');
-      return;
-    }
-
-    setLoading(true);
-    setError('');
-
-    try {
-      const photoData = capturePhoto();
-      
-      const response = await api.post('/identity-verification/upload-photo', {
-        photoData
-      });
-
-      setMessage('✅ Reference photo captured!');
-      setHasReferencePhoto(true);
-      setVerificationStep('capture');
-      stopWebcam();
-      
-    } catch (err) {
-      setError(err.response?.data?.message || 'Failed to upload photo');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleStartVerification = () => {
-    setVerificationStep('capture');
-    setError('');
-    setMessage('Position your face in the frame and click "Verify Identity"');
-    startWebcam();
-  };
-
-  const handleVerifyIdentity = async () => {
-    if (!faceDetected) {
-      setError('Please ensure your face is clearly visible before verifying');
-      return;
-    }
-
-    // Countdown before capture
-    setCountdown(3);
-    const countdownInterval = setInterval(() => {
-      setCountdown(prev => {
-        if (prev <= 1) {
-          clearInterval(countdownInterval);
-          performVerification();
-          return null;
+        if (canvasRef.current) {
+          const ctx = canvasRef.current.getContext('2d');
+          ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+          
+          if (predictions.length === 1) {
+            const face = predictions[0];
+            ctx.strokeStyle = '#00ff00';
+            ctx.lineWidth = 3;
+            ctx.strokeRect(
+              face.topLeft[0], face.topLeft[1],
+              face.bottomRight[0] - face.topLeft[0],
+              face.bottomRight[1] - face.topLeft[1]
+            );
+            ctx.fillStyle = '#00ff00';
+            ctx.font = '14px Arial';
+            ctx.fillText('Face Detected', 10, 25);
+          }
         }
-        return prev - 1;
-      });
-    }, 1000);
+        
+        setFaceDetected(predictions.length === 1);
+      } catch (err) {
+        // Silently continue
+      }
+    }, 400);
   };
 
-  const performVerification = async () => {
-    setLoading(true);
-    setError('');
+  const capturePhoto = useCallback(() => {
+    if (!videoRef.current) return null;
+    const video = videoRef.current;
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/jpeg', 0.8);
+  }, []);
 
+  // ---- Verification Flow ----
+  const handleVerifyNow = async () => {
+    if (!faceDetected && faceModelRef.current) {
+      setError('Please position your face clearly in the frame');
+      return;
+    }
+    setError('');
+    
+    const livePhoto = capturePhoto();
+    if (!livePhoto) {
+      setError('Failed to capture photo');
+      return;
+    }
+    
+    setCapturedPhoto(livePhoto);
+    setStep('matching');
+    stopWebcam();
+    
+    // Animate progress bar
+    let progress = 0;
+    const progressInterval = setInterval(() => {
+      progress += Math.random() * 15 + 5;
+      if (progress >= 90) { progress = 90; clearInterval(progressInterval); }
+      setVerifyProgress(progress);
+    }, 200);
+    
     try {
-      const currentPhoto = capturePhoto();
-      
       const response = await api.post('/identity-verification/verify-face', {
         interviewId,
-        currentPhoto
+        currentPhoto: livePhoto
       });
-
+      
+      clearInterval(progressInterval);
+      setVerifyProgress(100);
+      
       const data = response.data;
+      setMatchScore(data.matchScore);
       
       if (data.verified) {
-        setMessage('✅ ' + data.message);
-        setMatchScore(data.matchScore);
-        setVerificationStep('complete');
-        stopWebcam();
-        
-        // Notify parent component
-        setTimeout(() => {
-          if (onVerificationComplete) onVerificationComplete();
-        }, 3000);
+        setMatchResult('pass');
+        setMessage(data.message || 'Identity verified successfully!');
+        setStep('result');
+        setTimeout(() => onVerificationComplete?.(), 1500);
       } else {
-        setError(data.message);
-        setMatchScore(data.matchScore);
+        setFailCount(prev => prev + 1);
+        setMatchResult('fail');
+        setMessage(data.message || 'Verification failed');
+        setStep('result');
       }
-      
     } catch (err) {
+      clearInterval(progressInterval);
+      setFailCount(prev => prev + 1);
       const errorData = err.response?.data;
-      setError(errorData?.message || 'Verification failed');
+      
       if (errorData?.matchScore !== undefined) {
         setMatchScore(errorData.matchScore);
+        setMatchResult('fail');
+        setMessage(errorData.message || 'Verification failed');
+        setStep('result');
+      } else {
+        setError(errorData?.message || 'Verification failed. Please try again.');
+        setStep('verify');
+        setCapturedPhoto(null);
       }
-    } finally {
-      setLoading(false);
-      setCountdown(null);
     }
   };
 
-  // Render different steps
-  const renderContent = () => {
-    if (loading && verificationStep === 'check') {
-      return (
-        <div className="verification-loading">
-          <div className="spinner"></div>
-          <p>Checking verification status...</p>
-        </div>
-      );
-    }
+  const handleRetryVerification = () => {
+    setMatchScore(null);
+    setMatchResult(null);
+    setCapturedPhoto(null);
+    setError('');
+    setVerifyProgress(0);
+    setStep('verify');
+  };
 
-    if (verificationStep === 'reference') {
-      return (
-        <div className="verification-reference">
-          <div className="verification-icon">📸</div>
-          <h2>Capture Reference Photo</h2>
-          <p>First, we need to capture a reference photo of you.</p>
-          <p>This will be used to verify your identity before the interview.</p>
-          
-          {!webcamActive ? (
-            <button 
-              className="btn-primary"
-              onClick={startWebcam}
-            >
-              Start Camera
-            </button>
-          ) : (
-            <div className="camera-preview">
-              <div className="video-container">
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  playsInline
-                  muted
-                  width="640"
-                  height="480"
-                />
-                <canvas
-                  ref={canvasRef}
-                  width="640"
-                  height="480"
-                  style={{ position: 'absolute', top: 0, left: 0 }}
-                />
-              </div>
-              
-              <div className="camera-controls">
-                <button
-                  className="btn-primary"
-                  onClick={handleCaptureReference}
-                  disabled={!faceDetected || loading}
-                >
-                  {loading ? 'Uploading...' : 'Capture Photo'}
-                </button>
-                <button
-                  className="btn-secondary"
-                  onClick={stopWebcam}
+  const handleSkipVerification = async () => {
+    try {
+      setLoading(true);
+      await api.post('/identity-verification/skip', {
+        interviewId,
+        reason: failCount > 0 
+          ? `Face matching failed ${failCount} time(s) — candidate chose to skip` 
+          : 'Face matching service unavailable — candidate chose to skip'
+      });
+      console.log('⚠️ Identity verification skipped by candidate');
+      onVerificationComplete?.();
+    } catch (err) {
+      console.error('Skip verification error:', err);
+      // Even if the skip endpoint fails, allow proceeding
+      onVerificationComplete?.();
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ---- Render ----
+
+  if (step === 'loading') {
+    return (
+      <div className="iv-container">
+        <div className="iv-card">
+          <div className="iv-loading">
+            {!error ? (
+              <>
+                <div className="iv-spinner"></div>
+                <p>Preparing identity verification...</p>
+              </>
+            ) : (
+              <>
+                <p style={{ color: '#dc3545', marginBottom: '15px' }}>⚠️ {error}</p>
+                <button 
+                  className="iv-btn-secondary" 
+                  onClick={handleSkipVerification}
                   disabled={loading}
+                  style={{ background: '#6c757d', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '8px', cursor: 'pointer' }}
                 >
-                  Cancel
+                  {loading ? 'Skipping...' : 'Skip Verification & Proceed →'}
                 </button>
-              </div>
-              
-              {!faceDetected && (
-                <p className="warning-text">⚠️ Please position your face clearly in the frame</p>
-              )}
-            </div>
-          )}
+                <p style={{ fontSize: '12px', color: '#888', marginTop: '8px' }}>
+                  Recruiter will be notified that verification was skipped.
+                </p>
+              </>
+            )}
+          </div>
         </div>
-      );
-    }
+      </div>
+    );
+  }
 
-    if (verificationStep === 'capture') {
-      return (
-        <div className="verification-capture">
-          <div className="verification-icon">🔐</div>
-          <h2>Verify Your Identity</h2>
-          <p>To ensure interview integrity, please verify your identity.</p>
-          <p>We will match your face with your reference photo.</p>
-          
-          {!webcamActive ? (
-            <button 
-              className="btn-primary"
-              onClick={handleStartVerification}
-            >
-              Start Verification
-            </button>
-          ) : (
-            <div className="camera-preview">
-              <div className="video-container">
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  playsInline
-                  muted
-                  width="640"
-                  height="480"
-                />
-                <canvas
-                  ref={canvasRef}
-                  width="640"
-                  height="480"
-                  style={{ position: 'absolute', top: 0, left: 0 }}
-                />
-                
-                {countdown !== null && (
-                  <div className="countdown-overlay">
-                    <div className="countdown-number">{countdown}</div>
+  if (step === 'no-photo') {
+    return (
+      <div className="iv-container">
+        <div className="iv-card">
+          <div className="iv-result pass">
+            <div className="iv-result-icon">✅</div>
+            <h2>Verification Skipped</h2>
+            <p style={{ marginTop: '12px', color: '#666' }}>
+              No application photo on file. Proceeding to assessment.
+            </p>
+            <p className="iv-redirect">Starting assessment...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === 'verify') {
+    return (
+      <div className="iv-container">
+        <div className="iv-card iv-card-wide">
+          {error && <div className="iv-error"><span>Warning:</span> {error}</div>}
+          <div className="iv-header">
+            <h2>Verify Your Identity</h2>
+            <p>Position your face in the camera, then click <strong>Verify Now</strong></p>
+          </div>
+          <div className="iv-comparison-layout">
+            <div className="iv-photo-panel">
+              <div className="iv-panel-label">Application Photo</div>
+              <div className="iv-photo-frame reference">
+                {referencePhoto ? <img src={referencePhoto} alt="Reference" /> : <div className="iv-photo-placeholder">No photo</div>}
+              </div>
+            </div>
+            <div className="iv-vs-indicator">
+              <div className="iv-vs-circle">VS</div>
+            </div>
+            <div className="iv-photo-panel">
+              <div className="iv-panel-label">Live Camera</div>
+              <div className="iv-photo-frame live">
+                {webcamActive ? (
+                  <div className="iv-video-wrap compact">
+                    <video ref={videoRef} autoPlay playsInline muted />
+                    <canvas ref={canvasRef} width="320" height="240" />
                   </div>
+                ) : (
+                  <div className="iv-photo-placeholder"><div className="iv-spinner"></div></div>
                 )}
               </div>
-              
-              <div className="camera-controls">
-                <button
-                  className="btn-primary"
-                  onClick={handleVerifyIdentity}
-                  disabled={!faceDetected || loading || countdown !== null}
-                >
-                  {loading ? 'Verifying...' : countdown !== null ? 'Capturing...' : 'Verify Identity'}
-                </button>
-                <button
-                  className="btn-secondary"
-                  onClick={() => {
-                    stopWebcam();
-                    setVerificationStep('check');
-                  }}
-                  disabled={loading || countdown !== null}
-                >
-                  Cancel
-                </button>
-              </div>
-              
-              {!faceDetected && !countdown && (
-                <p className="warning-text">⚠️ Please position your face clearly in the frame</p>
-              )}
-              
-              {matchScore !== null && (
-                <div className={`match-score ${matchScore >= 70 ? 'good' : 'poor'}`}>
-                  Match Score: {matchScore}%
-                  {matchScore < 70 && <span> (Minimum 70% required)</span>}
+              {webcamActive && faceModelRef.current && (
+                <div className={`iv-face-status ${faceDetected ? 'detected' : ''}`}>
+                  {faceDetected ? 'Face Detected' : 'No Face Detected'}
                 </div>
               )}
             </div>
+          </div>
+          <div className="iv-actions center">
+            <button className="iv-btn-verify" onClick={handleVerifyNow} disabled={(!faceDetected && !!faceModelRef.current) || !webcamActive}>
+              Verify Now
+            </button>
+            {failCount > 0 && (
+              <button 
+                className="iv-btn-secondary" 
+                onClick={handleSkipVerification}
+                disabled={loading}
+                style={{ marginLeft: '10px', background: '#6c757d', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '8px', cursor: 'pointer' }}
+              >
+                {loading ? 'Skipping...' : 'Skip Verification →'}
+              </button>
+            )}
+          </div>
+          {failCount > 0 && (
+            <p style={{ textAlign: 'center', fontSize: '12px', color: '#888', marginTop: '8px' }}>
+              Verification failed {failCount} time(s). You may skip, but the recruiter will be notified.
+            </p>
           )}
         </div>
-      );
-    }
-
-    if (verificationStep === 'complete') {
-      return (
-        <div className="verification-complete">
-          <div className="success-icon">✅</div>
-          <h2>Identity Verified!</h2>
-          <p>{message}</p>
-          {matchScore && (
-            <div className="final-score">
-              <p>Match Score: <strong>{matchScore}%</strong></p>
-            </div>
-          )}
-          <p className="redirect-message">Redirecting to interview...</p>
-        </div>
-      );
-    }
-
-    return null;
-  };
-
-  return (
-    <div className="identity-verification-container">
-      <div className="verification-card">
-        {error && (
-          <div className="error-banner">
-            <span>⚠️</span> {error}
-          </div>
-        )}
-        
-        {message && !error && verificationStep !== 'complete' && (
-          <div className="info-banner">
-            <span>ℹ️</span> {message}
-          </div>
-        )}
-        
-        {renderContent()}
       </div>
-    </div>
-  );
+    );
+  }
+
+  if (step === 'matching') {
+    return (
+      <div className="iv-container">
+        <div className="iv-card iv-card-wide">
+          <div className="iv-header"><h2>Verifying Identity...</h2></div>
+          <div className="iv-comparison-layout matching">
+            <div className="iv-photo-panel">
+              <div className="iv-panel-label">Application Photo</div>
+              <div className="iv-photo-frame reference scanning">
+                {referencePhoto && <img src={referencePhoto} alt="Reference" />}
+                <div className="iv-scan-line"></div>
+              </div>
+            </div>
+            <div className="iv-vs-indicator">
+              <div className="iv-vs-circle pulse">⚡</div>
+            </div>
+            <div className="iv-photo-panel">
+              <div className="iv-panel-label">Your Photo</div>
+              <div className="iv-photo-frame captured scanning">
+                {capturedPhoto && <img src={capturedPhoto} alt="Captured" />}
+                <div className="iv-scan-line"></div>
+              </div>
+            </div>
+          </div>
+          <div className="iv-progress-section">
+            <div className="iv-progress-bar">
+              <div className="iv-progress-fill" style={{ width: `${verifyProgress}%` }}></div>
+            </div>
+            <p className="iv-progress-text">
+              {verifyProgress < 30 ? 'Analyzing facial features...' :
+               verifyProgress < 60 ? 'Comparing face geometry...' :
+               verifyProgress < 90 ? 'Computing match score...' :
+               'Finalizing results...'}
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === 'result') {
+    const isPassed = matchResult === 'pass';
+    return (
+      <div className="iv-container">
+        <div className="iv-card iv-card-wide">
+          <div className={`iv-result ${isPassed ? 'pass' : 'fail'}`}>
+            <div className="iv-result-icon">{isPassed ? '✅' : '❌'}</div>
+            <h2>{isPassed ? 'Identity Verified!' : 'Verification Failed'}</h2>
+            {matchScore !== null && (
+              <div className="iv-score-display">
+                <div className={`iv-score-circle ${isPassed ? 'pass' : 'fail'}`}>
+                  <span className="iv-score-num">{matchScore}%</span>
+                  <span className="iv-score-label">Match</span>
+                </div>
+              </div>
+            )}
+            {(referencePhoto || capturedPhoto) && (
+              <div className="iv-result-photos">
+                {referencePhoto && <div className="iv-result-photo"><img src={referencePhoto} alt="Reference" /><span>Application</span></div>}
+                {capturedPhoto && <div className="iv-result-photo"><img src={capturedPhoto} alt="Live" /><span>Live Capture</span></div>}
+              </div>
+            )}
+            {isPassed ? (
+              <p className="iv-result-message">
+                {message || 'Identity verified successfully!'}
+                <br /><span className="iv-redirect">Starting assessment...</span>
+              </p>
+            ) : (
+              <div className="iv-fail-actions">
+                <p>{message || 'Face did not match the reference photo.'}</p>
+                <button className="iv-btn-primary" onClick={handleRetryVerification}>Try Again</button>
+                <button 
+                  className="iv-btn-secondary" 
+                  onClick={handleSkipVerification}
+                  disabled={loading}
+                  style={{ marginLeft: '10px', background: '#6c757d', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '8px', cursor: 'pointer' }}
+                >
+                  {loading ? 'Skipping...' : 'Skip & Proceed →'}
+                </button>
+                <p style={{ fontSize: '12px', color: '#888', marginTop: '8px' }}>
+                  Skipping will be noted in the recruiter's report.
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
 };
 
 export default IdentityVerification;

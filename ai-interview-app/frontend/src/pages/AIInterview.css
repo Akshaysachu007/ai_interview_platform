@@ -1216,3 +1216,75 @@
 .webcam-display {
   position: relative;
 }
+
+/* ========== Violation Alert Modal ========== */
+@keyframes violation-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.15); }
+}
+
+.violation-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  background: rgba(0, 0, 0, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(4px);
+}
+
+.violation-modal {
+  background: linear-gradient(145deg, #1a1a2e, #16213e);
+  border: 2px solid #e74c3c;
+  border-radius: 16px;
+  padding: 36px 44px;
+  max-width: 460px;
+  width: 90%;
+  text-align: center;
+  box-shadow: 0 0 40px rgba(231, 76, 60, 0.4), 0 8px 32px rgba(0,0,0,0.5);
+  animation: violation-pulse 1.5s ease-in-out infinite;
+}
+
+.violation-modal-icon {
+  font-size: 52px;
+  margin-bottom: 12px;
+}
+
+.violation-modal-title {
+  color: #e74c3c;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  margin: 0 0 12px 0;
+  text-transform: uppercase;
+}
+
+.violation-modal-msg {
+  color: #ccc;
+  font-size: 15px;
+  line-height: 1.6;
+  margin: 0 0 28px 0;
+}
+
+.violation-modal-btn {
+  background: linear-gradient(135deg, #e74c3c, #c0392b);
+  color: white;
+  border: none;
+  padding: 14px 40px;
+  font-size: 16px;
+  font-weight: 700;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s;
+  box-shadow: 0 4px 16px rgba(231, 76, 60, 0.4);
+}
+
+.violation-modal-btn:hover {
+  transform: translateY(-2px) scale(1.03);
+  box-shadow: 0 6px 24px rgba(231, 76, 60, 0.55);
+}
+
+.violation-modal-btn:active {
+  transform: translateY(0) scale(0.98);
+}

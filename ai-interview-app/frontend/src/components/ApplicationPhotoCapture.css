@@ -270,6 +270,28 @@
   border-left: 4px solid #667eea;
 }
 
+/* Spinner */
+
+.spinner {
+  width: 48px;
+  height: 48px;
+  border: 4px solid #e0e0e0;
+  border-top-color: #667eea;
+  border-radius: 50%;
+  animation: spinner 0.8s linear infinite;
+  margin: 0 auto 20px;
+}
+
+/* Photo Badge in Review */
+
+.upload-badge.webcam-badge {
+  text-align: center;
+  font-size: 14px;
+  color: #667eea;
+  margin-bottom: 10px;
+  font-weight: 500;
+}
+
 /* Responsive Design */
 
 @media (max-width: 768px) {

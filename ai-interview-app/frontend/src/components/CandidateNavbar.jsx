@@ -9,7 +9,7 @@ export default function CandidateNavbar({ onLogout }) {
         <li><a href="/candidate/dashboard">Dashboard</a></li>
         <li><a href="/candidate/interview">🎯 AI Interview</a></li>
         <li><a href="#profile">Profile</a></li>
-        <li><a href="#interviews">Interviews</a></li>
+        <li><a href="#interviews">Jobs</a></li>
         <li><a href="#settings">Settings</a></li>
       </ul>
       <button className="navbar-logout" onClick={onLogout}>Logout</button>
